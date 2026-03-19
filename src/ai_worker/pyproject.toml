@@ -1,0 +1,31 @@
+[project]
+name = "ai-worker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "grpcio>=1.78.0",
+    "grpcio-tools>=1.78.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.6",
+]
+
+[tool.ruff]
+line-length = 12
+exclude = ["*_pb2.py", "*_pb2_grpc.py", "venv"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+exclude = ['(?x)(_pb2\.py$|_pb2_grpc\.py$)']
+
+[[tool.mypy.overrides]]
+module = ["grpc", "hello_pb2", "hello_pb2_grpc"]
+ignore_missing_imports = true
