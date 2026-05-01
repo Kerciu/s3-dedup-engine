@@ -120,7 +120,7 @@ const file_hello_proto_rawDesc = "" +
 	"HelloReply\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage2J\n" +
 	"\x0eGreeterService\x128\n" +
-	"\bSayHello\x12\x15.greeter.HelloRequest\x1a\x13.greeter.HelloReply\"\x00B Z\x1es3-dedup-engine/src/gateway/pbb\x06proto3"
+	"\bSayHello\x12\x15.greeter.HelloRequest\x1a\x13.greeter.HelloReply\"\x00B%Z#s3-dedup-engine/services/gateway/pbb\x06proto3"
 
 var (
 	file_hello_proto_rawDescOnce sync.Once

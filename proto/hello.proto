@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package greeter;
 
-option go_package = "s3-dedup-engine/src/gateway/pb";
+option go_package = "s3-dedup-engine/services/gateway/pb";
 
 service GreeterService {
     rpc SayHello (HelloRequest) returns (HelloReply) {}

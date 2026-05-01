@@ -1,0 +1,99 @@
+services:
+  localstack:
+    image: localstack/localstack:3.7
+    container_name: s3-dedup-localstack
+    environment:
+      - SERVICES=s3,dynamodb
+      - AWS_DEFAULT_REGION=eu-central-1
+      - DEBUG=1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - ../localstack/init:/etc/localstack/init/ready.d
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: s3-dedup-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: s3-dedup-postgres
+    environment:
+      - POSTGRES_DB=dedup
+      - POSTGRES_USER=dedup
+      - POSTGRES_PASSWORD=dedup
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dedup -d dedup"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ai_worker:
+    build:
+      context: ../../services/ai_worker
+      dockerfile: Dockerfile
+    container_name: s3-dedup-ai-worker
+    depends_on:
+      localstack:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=eu-central-1
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - DYNAMODB_ENDPOINT_URL=http://localstack:4566
+      - DEDUP_BUCKET=dedup-canonical-files
+      - METADATA_TABLE=dedup-metadata
+      - REDIS_ADDR=redis:6379
+      - PG_DSN=postgresql://dedup:dedup@postgres:5432/dedup
+    ports:
+      - "50051:50051"
+
+  gateway:
+    build:
+      context: ../../services/gateway
+      dockerfile: Dockerfile
+    container_name: s3-dedup-gateway
+    depends_on:
+      ai_worker:
+        condition: service_started
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=eu-central-1
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - DYNAMODB_ENDPOINT_URL=http://localstack:4566
+      - DEDUP_BUCKET=dedup-canonical-files
+      - METADATA_TABLE=dedup-metadata
+      - AI_WORKER_GRPC_ADDR=ai_worker:50051
+      - REDIS_ADDR=redis:6379
+      - PG_DSN=postgresql://dedup:dedup@postgres:5432/dedup
+    ports:
+      - "8080:8080"
+
+volumes:
+  localstack_data:
+  postgres_data:
