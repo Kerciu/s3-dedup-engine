@@ -22,10 +22,12 @@ const (
 )
 
 type SimilarityRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Image          []byte                 `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
+	ReferenceImage []byte                 `protobuf:"bytes,2,opt,name=reference_image,json=referenceImage,proto3" json:"reference_image,omitempty"`
+	FileName       string                 `protobuf:"bytes,3,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SimilarityRequest) Reset() {
@@ -58,18 +60,32 @@ func (*SimilarityRequest) Descriptor() ([]byte, []int) {
 	return file_dedup_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *SimilarityRequest) GetText() string {
+func (x *SimilarityRequest) GetImage() []byte {
 	if x != nil {
-		return x.Text
+		return x.Image
+	}
+	return nil
+}
+
+func (x *SimilarityRequest) GetReferenceImage() []byte {
+	if x != nil {
+		return x.ReferenceImage
+	}
+	return nil
+}
+
+func (x *SimilarityRequest) GetFileName() string {
+	if x != nil {
+		return x.FileName
 	}
 	return ""
 }
 
 type SimilarityResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Score         float32                `protobuf:"fixed32,1,opt,name=score,proto3" json:"score,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SimilarityScore float32                `protobuf:"fixed32,1,opt,name=similarity_score,json=similarityScore,proto3" json:"similarity_score,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SimilarityResponse) Reset() {
@@ -102,9 +118,9 @@ func (*SimilarityResponse) Descriptor() ([]byte, []int) {
 	return file_dedup_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *SimilarityResponse) GetScore() float32 {
+func (x *SimilarityResponse) GetSimilarityScore() float32 {
 	if x != nil {
-		return x.Score
+		return x.SimilarityScore
 	}
 	return 0
 }
@@ -113,11 +129,13 @@ var File_dedup_proto protoreflect.FileDescriptor
 
 const file_dedup_proto_rawDesc = "" +
 	"\n" +
-	"\vdedup.proto\x12\x05dedup\"'\n" +
-	"\x11SimilarityRequest\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"*\n" +
-	"\x12SimilarityResponse\x12\x14\n" +
-	"\x05score\x18\x01 \x01(\x02R\x05score2[\n" +
+	"\vdedup.proto\x12\x05dedup\"o\n" +
+	"\x11SimilarityRequest\x12\x14\n" +
+	"\x05image\x18\x01 \x01(\fR\x05image\x12'\n" +
+	"\x0freference_image\x18\x02 \x01(\fR\x0ereferenceImage\x12\x1b\n" +
+	"\tfile_name\x18\x03 \x01(\tR\bfileName\"?\n" +
+	"\x12SimilarityResponse\x12)\n" +
+	"\x10similarity_score\x18\x01 \x01(\x02R\x0fsimilarityScore2[\n" +
 	"\x11SimilarityService\x12F\n" +
 	"\x0fCheckSimilarity\x12\x18.dedup.SimilarityRequest\x1a\x19.dedup.SimilarityResponseB%Z#s3-dedup-engine/services/gateway/pbb\x06proto3"
 

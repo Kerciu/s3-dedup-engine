@@ -9,9 +9,11 @@ service SimilarityService {
 }
 
 message SimilarityRequest {
-  string text = 1;
+  bytes image = 1;
+  bytes reference_image = 2;
+  string file_name = 3;
 }
 
 message SimilarityResponse {
-  float score = 1;
+  float similarity_score = 1;
 }

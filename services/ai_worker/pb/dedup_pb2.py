@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x64\x65\x64up.proto\x12\x05\x64\x65\x64up\"!\n\x11SimilarityRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\"#\n\x12SimilarityResponse\x12\r\n\x05score\x18\x01 \x01(\x02\x32[\n\x11SimilarityService\x12\x46\n\x0f\x43heckSimilarity\x12\x18.dedup.SimilarityRequest\x1a\x19.dedup.SimilarityResponseB%Z#s3-dedup-engine/services/gateway/pbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x64\x65\x64up.proto\x12\x05\x64\x65\x64up\"N\n\x11SimilarityRequest\x12\r\n\x05image\x18\x01 \x01(\x0c\x12\x17\n\x0freference_image\x18\x02 \x01(\x0c\x12\x11\n\tfile_name\x18\x03 \x01(\t\".\n\x12SimilarityResponse\x12\x18\n\x10similarity_score\x18\x01 \x01(\x02\x32[\n\x11SimilarityService\x12\x46\n\x0f\x43heckSimilarity\x12\x18.dedup.SimilarityRequest\x1a\x19.dedup.SimilarityResponseB%Z#s3-dedup-engine/services/gateway/pbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,9 +33,9 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z#s3-dedup-engine/services/gateway/pb'
   _globals['_SIMILARITYREQUEST']._serialized_start=22
-  _globals['_SIMILARITYREQUEST']._serialized_end=55
-  _globals['_SIMILARITYRESPONSE']._serialized_start=57
-  _globals['_SIMILARITYRESPONSE']._serialized_end=92
-  _globals['_SIMILARITYSERVICE']._serialized_start=94
-  _globals['_SIMILARITYSERVICE']._serialized_end=185
+  _globals['_SIMILARITYREQUEST']._serialized_end=100
+  _globals['_SIMILARITYRESPONSE']._serialized_start=102
+  _globals['_SIMILARITYRESPONSE']._serialized_end=148
+  _globals['_SIMILARITYSERVICE']._serialized_start=150
+  _globals['_SIMILARITYSERVICE']._serialized_end=241
 # @@protoc_insertion_point(module_scope)

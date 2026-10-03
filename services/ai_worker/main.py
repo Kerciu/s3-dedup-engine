@@ -1,4 +1,4 @@
-"""Minimal gRPC SimilarityService stub for local gateway development."""
+"""Minimal gRPC SimilarityService mock for visual deduplication development."""
 
 from concurrent import futures
 import logging
@@ -10,11 +10,23 @@ from pb import dedup_pb2, dedup_pb2_grpc
 
 
 class SimilarityService(dedup_pb2_grpc.SimilarityServiceServicer):
-    """Returns a fixed low score so mock tickets take the AcceptFull path."""
+    """Returns 0.0 without a reference image, otherwise a fixed mock score."""
 
     def CheckSimilarity(self, request, context):
-        logging.info("CheckSimilarity text_len=%d", len(request.text))
-        return dedup_pb2.SimilarityResponse(score=MOCK_SIMILARITY_SCORE)
+        if not request.reference_image:
+            logging.info(
+                "CheckSimilarity file=%s no reference; score=0.0",
+                request.file_name,
+            )
+            return dedup_pb2.SimilarityResponse(similarity_score=0.0)
+        logging.info(
+            "CheckSimilarity file=%s image_bytes=%d reference_bytes=%d score=%.2f",
+            request.file_name,
+            len(request.image),
+            len(request.reference_image),
+            MOCK_SIMILARITY_SCORE,
+        )
+        return dedup_pb2.SimilarityResponse(similarity_score=MOCK_SIMILARITY_SCORE)
 
 
 def main() -> None:

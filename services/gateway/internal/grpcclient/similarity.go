@@ -36,12 +36,16 @@ func DialSimilarity(ctx context.Context) (*SimilarityClient, error) {
 	}, nil
 }
 
-func (c *SimilarityClient) CheckSimilarity(ctx context.Context, text string) (float32, error) {
-	resp, err := c.client.CheckSimilarity(ctx, &pb.SimilarityRequest{Text: text})
+func (c *SimilarityClient) CheckSimilarity(ctx context.Context, image, reference []byte, fileName string) (float32, error) {
+	resp, err := c.client.CheckSimilarity(ctx, &pb.SimilarityRequest{
+		Image:          image,
+		ReferenceImage: reference,
+		FileName:       fileName,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("CheckSimilarity rpc: %w", err)
 	}
-	return resp.GetScore(), nil
+	return resp.GetSimilarityScore(), nil
 }
 
 func (c *SimilarityClient) Close() error {

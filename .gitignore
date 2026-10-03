@@ -38,3 +38,6 @@ venv
 *.pyc
 ~$*.docx
 .mypy_cache
+
+# datasets
+.datasets/
