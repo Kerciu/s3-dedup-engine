@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package dedup;
+
+option go_package = "s3-dedup-engine/services/gateway/pb";
+
+service SimilarityService {
+  rpc CheckSimilarity(SimilarityRequest) returns (SimilarityResponse);
+}
+
+message SimilarityRequest {
+  string text = 1;
+}
+
+message SimilarityResponse {
+  float score = 1;
+}

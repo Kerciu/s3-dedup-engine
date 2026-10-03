@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-import hello_pb2 as hello__pb2
+from . import dedup_pb2 as dedup__pb2
 
-GRPC_GENERATED_VERSION = '1.78.0'
+GRPC_GENERATED_VERSION = '1.84.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in hello_pb2_grpc.py depends on'
+        + ' but the generated code in dedup_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class GreeterServiceStub(object):
+class SimilarityServiceStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -34,43 +34,43 @@ class GreeterServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.SayHello = channel.unary_unary(
-                '/greeter.GreeterService/SayHello',
-                request_serializer=hello__pb2.HelloRequest.SerializeToString,
-                response_deserializer=hello__pb2.HelloReply.FromString,
+        self.CheckSimilarity = channel.unary_unary(
+                '/dedup.SimilarityService/CheckSimilarity',
+                request_serializer=dedup__pb2.SimilarityRequest.SerializeToString,
+                response_deserializer=dedup__pb2.SimilarityResponse.FromString,
                 _registered_method=True)
 
 
-class GreeterServiceServicer(object):
+class SimilarityServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
-    def SayHello(self, request, context):
+    def CheckSimilarity(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_GreeterServiceServicer_to_server(servicer, server):
+def add_SimilarityServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'SayHello': grpc.unary_unary_rpc_method_handler(
-                    servicer.SayHello,
-                    request_deserializer=hello__pb2.HelloRequest.FromString,
-                    response_serializer=hello__pb2.HelloReply.SerializeToString,
+            'CheckSimilarity': grpc.unary_unary_rpc_method_handler(
+                    servicer.CheckSimilarity,
+                    request_deserializer=dedup__pb2.SimilarityRequest.FromString,
+                    response_serializer=dedup__pb2.SimilarityResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'greeter.GreeterService', rpc_method_handlers)
+            'dedup.SimilarityService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('greeter.GreeterService', rpc_method_handlers)
+    server.add_registered_method_handlers('dedup.SimilarityService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class GreeterService(object):
+class SimilarityService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def SayHello(request,
+    def CheckSimilarity(request,
             target,
             options=(),
             channel_credentials=None,
@@ -83,9 +83,9 @@ class GreeterService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/greeter.GreeterService/SayHello',
-            hello__pb2.HelloRequest.SerializeToString,
-            hello__pb2.HelloReply.FromString,
+            '/dedup.SimilarityService/CheckSimilarity',
+            dedup__pb2.SimilarityRequest.SerializeToString,
+            dedup__pb2.SimilarityResponse.FromString,
             options,
             channel_credentials,
             insecure,

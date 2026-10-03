@@ -63,8 +63,8 @@ services:
       - AWS_REGION=eu-central-1
       - S3_ENDPOINT_URL=http://localstack:4566
       - DYNAMODB_ENDPOINT_URL=http://localstack:4566
-      - DEDUP_BUCKET=dedup-canonical-files
-      - METADATA_TABLE=dedup-metadata
+      - DEDUP_BUCKET=raw-tickets-bucket
+      - METADATA_TABLE=ticket-hashes
       - REDIS_ADDR=redis:6379
       - PG_DSN=postgresql://dedup:dedup@postgres:5432/dedup
     ports:
@@ -86,8 +86,8 @@ services:
       - AWS_REGION=eu-central-1
       - S3_ENDPOINT_URL=http://localstack:4566
       - DYNAMODB_ENDPOINT_URL=http://localstack:4566
-      - DEDUP_BUCKET=dedup-canonical-files
-      - METADATA_TABLE=dedup-metadata
+      - DEDUP_BUCKET=raw-tickets-bucket
+      - METADATA_TABLE=ticket-hashes
       - AI_WORKER_GRPC_ADDR=ai_worker:50051
       - REDIS_ADDR=redis:6379
       - PG_DSN=postgresql://dedup:dedup@postgres:5432/dedup
