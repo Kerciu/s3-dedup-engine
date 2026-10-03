@@ -3,35 +3,64 @@ package dedup
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 
 	"s3-dedup-engine/services/gateway/internal/constants"
 	"s3-dedup-engine/services/gateway/internal/domain"
 	"s3-dedup-engine/services/gateway/internal/grpcclient"
 )
 
-// SimilarityPipeline scores semantic duplicates and branches into InfoGain when needed.
+// SimilarityPipeline is the terminal stage delegating the verdict to the AI worker.
 type SimilarityPipeline struct {
-	client   *grpcclient.SimilarityClient
-	infoGain *InfoGainPipeline
+	client *grpcclient.DedupClient
 }
 
-func NewSimilarityPipeline(client *grpcclient.SimilarityClient, infoGain *InfoGainPipeline) *SimilarityPipeline {
-	return &SimilarityPipeline{client: client, infoGain: infoGain}
+func NewSimilarityPipeline(client *grpcclient.DedupClient) *SimilarityPipeline {
+	return &SimilarityPipeline{client: client}
 }
 
-func (p *SimilarityPipeline) Process(ctx context.Context, ticket *domain.Ticket) (DedupDecision, error) {
-	score, err := p.client.CheckSimilarity(ctx, ticket.Text)
+func (p *SimilarityPipeline) Process(ctx context.Context, img *domain.ImageRecord) (DedupDecision, error) {
+	f, err := os.Open(img.FilePath)
 	if err != nil {
-		return 0, fmt.Errorf("check similarity: %w", err)
+		return 0, fmt.Errorf("open image for similarity: %w", err)
 	}
-	log.Printf("SimilarityPipeline: ticket %s score=%.4f threshold=%.2f", ticket.ID, score, constants.SimilarityThreshold)
+	defer f.Close()
 
-	if score < constants.SimilarityThreshold {
-		log.Printf("SimilarityPipeline: no semantic duplicate for ticket %s; accept full upload", ticket.ID)
+	result, err := p.client.ProcessImage(ctx, img.FileName, img.SizeBytes, f)
+	if err != nil {
+		return 0, fmt.Errorf("semantic dedup rpc: %w", err)
+	}
+
+	img.QualityScore = result.QualityScore
+	img.SemanticDistance = result.Distance
+	img.ExistingImageKey = result.ExistingImageKey
+	slog.Info("semantic dedup verdict",
+		"file", img.FileName,
+		"status", result.Status,
+		"quality_score", result.QualityScore,
+		"distance", result.Distance,
+		"existing_image_key", result.ExistingImageKey,
+	)
+
+	return applySemanticStatus(img, result.Status)
+}
+
+func applySemanticStatus(img *domain.ImageRecord, status string) (DedupDecision, error) {
+	switch status {
+	case constants.StatusInserted:
+		img.SoftDedup = false
+		img.ReplaceExisting = false
 		return DecisionAcceptFull, nil
+	case constants.StatusReplaced:
+		img.SoftDedup = false
+		img.ReplaceExisting = true
+		return DecisionAcceptFull, nil
+	case constants.StatusDuplicateRejected:
+		img.SoftDedup = true
+		img.ReplaceExisting = false
+		return DecisionSoftDedup, nil
+	default:
+		return 0, fmt.Errorf("unknown dedup status %q from ai worker", status)
 	}
-
-	log.Printf("SimilarityPipeline: semantic duplicate for ticket %s; running InfoGain", ticket.ID)
-	return p.infoGain.Process(ctx, ticket)
 }

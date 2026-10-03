@@ -5,39 +5,61 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
+	"os"
 
 	"s3-dedup-engine/services/gateway/internal/domain"
 	"s3-dedup-engine/services/gateway/internal/storage"
 )
 
-// HashCollisionPipeline hashes payloads and soft-dedups on exact DynamoDB hits.
-type HashCollisionPipeline struct {
+type FullHashPipeline struct {
 	dynamo storage.DynamoClient
-	mock   bool
 }
 
-func NewHashCollisionPipeline(dynamo storage.DynamoClient) *HashCollisionPipeline {
-	return &HashCollisionPipeline{dynamo: dynamo, mock: true}
+func NewFullHashPipeline(dynamo storage.DynamoClient) *FullHashPipeline {
+	return &FullHashPipeline{dynamo: dynamo}
 }
 
-func (p *HashCollisionPipeline) Process(ctx context.Context, ticket *domain.Ticket) (DedupDecision, error) {
-	sum := sha256.Sum256(ticket.Payload)
-	ticket.FileHash = hex.EncodeToString(sum[:])
-	log.Printf("HashCollisionPipeline: ticket %s hash=%s", ticket.ID, ticket.FileHash)
-
-	if p.mock {
-		log.Printf("HashCollisionPipeline: mocked DynamoDB miss for hash %s", ticket.FileHash)
+func (p *FullHashPipeline) Process(ctx context.Context, img *domain.ImageRecord) (DedupDecision, error) {
+	if !img.ChunkMatched {
+		slog.Debug("skipping full hash; no chunk candidates", "file", img.FileName)
 		return DecisionContinue, nil
 	}
 
-	exists, err := p.dynamo.CheckHashExists(ctx, ticket.FileHash)
+	f, err := os.Open(img.FilePath)
 	if err != nil {
-		return 0, fmt.Errorf("check hash exists: %w", err)
+		return 0, fmt.Errorf("open image for full hash: %w", err)
 	}
-	if exists {
-		log.Printf("HashCollisionPipeline: collision for ticket %s; soft-dedup", ticket.ID)
-		return DecisionSoftDedup, nil
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return 0, fmt.Errorf("hash full image: %w", err)
 	}
-	return DecisionContinue, nil
+	img.FullHash = hex.EncodeToString(h.Sum(nil))
+	slog.Debug("computed full hash", "file", img.FileName, "full_hash", img.FullHash)
+
+	s3Key, found, err := p.dynamo.GetByChunkAndFull(ctx, img.ChunkHash, img.FullHash)
+	if err != nil {
+		return 0, fmt.Errorf("lookup full hash: %w", err)
+	}
+	if !found {
+		slog.Debug("no bit-identical match; fallback to similarity",
+			"file", img.FileName,
+			"chunk_hash", img.ChunkHash,
+			"full_hash", img.FullHash,
+		)
+		return DecisionContinue, nil
+	}
+
+	img.SoftDedup = true
+	if s3Key != "" {
+		img.ExistingS3Key = s3Key
+	}
+	slog.Info("bit-identical duplicate; soft-dedup",
+		"file", img.FileName,
+		"existing_s3_key", s3Key,
+	)
+	return DecisionSoftDedup, nil
 }

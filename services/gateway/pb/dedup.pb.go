@@ -21,27 +21,29 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type SimilarityRequest struct {
+type ImageChunk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	ImageKey      string                 `protobuf:"bytes,1,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
+	TotalSize     int64                  `protobuf:"varint,2,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
+	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SimilarityRequest) Reset() {
-	*x = SimilarityRequest{}
+func (x *ImageChunk) Reset() {
+	*x = ImageChunk{}
 	mi := &file_dedup_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SimilarityRequest) String() string {
+func (x *ImageChunk) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SimilarityRequest) ProtoMessage() {}
+func (*ImageChunk) ProtoMessage() {}
 
-func (x *SimilarityRequest) ProtoReflect() protoreflect.Message {
+func (x *ImageChunk) ProtoReflect() protoreflect.Message {
 	mi := &file_dedup_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -53,39 +55,57 @@ func (x *SimilarityRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SimilarityRequest.ProtoReflect.Descriptor instead.
-func (*SimilarityRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ImageChunk.ProtoReflect.Descriptor instead.
+func (*ImageChunk) Descriptor() ([]byte, []int) {
 	return file_dedup_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *SimilarityRequest) GetText() string {
+func (x *ImageChunk) GetImageKey() string {
 	if x != nil {
-		return x.Text
+		return x.ImageKey
 	}
 	return ""
 }
 
-type SimilarityResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Score         float32                `protobuf:"fixed32,1,opt,name=score,proto3" json:"score,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+func (x *ImageChunk) GetTotalSize() int64 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
 }
 
-func (x *SimilarityResponse) Reset() {
-	*x = SimilarityResponse{}
+func (x *ImageChunk) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type ProcessImageResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Status           string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	ImageKey         string                 `protobuf:"bytes,2,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
+	QualityScore     float32                `protobuf:"fixed32,3,opt,name=quality_score,json=qualityScore,proto3" json:"quality_score,omitempty"`
+	Distance         float32                `protobuf:"fixed32,4,opt,name=distance,proto3" json:"distance,omitempty"`
+	ExistingImageKey string                 `protobuf:"bytes,5,opt,name=existing_image_key,json=existingImageKey,proto3" json:"existing_image_key,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ProcessImageResponse) Reset() {
+	*x = ProcessImageResponse{}
 	mi := &file_dedup_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SimilarityResponse) String() string {
+func (x *ProcessImageResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SimilarityResponse) ProtoMessage() {}
+func (*ProcessImageResponse) ProtoMessage() {}
 
-func (x *SimilarityResponse) ProtoReflect() protoreflect.Message {
+func (x *ProcessImageResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_dedup_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -97,29 +117,65 @@ func (x *SimilarityResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SimilarityResponse.ProtoReflect.Descriptor instead.
-func (*SimilarityResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ProcessImageResponse.ProtoReflect.Descriptor instead.
+func (*ProcessImageResponse) Descriptor() ([]byte, []int) {
 	return file_dedup_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *SimilarityResponse) GetScore() float32 {
+func (x *ProcessImageResponse) GetStatus() string {
 	if x != nil {
-		return x.Score
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ProcessImageResponse) GetImageKey() string {
+	if x != nil {
+		return x.ImageKey
+	}
+	return ""
+}
+
+func (x *ProcessImageResponse) GetQualityScore() float32 {
+	if x != nil {
+		return x.QualityScore
 	}
 	return 0
+}
+
+func (x *ProcessImageResponse) GetDistance() float32 {
+	if x != nil {
+		return x.Distance
+	}
+	return 0
+}
+
+func (x *ProcessImageResponse) GetExistingImageKey() string {
+	if x != nil {
+		return x.ExistingImageKey
+	}
+	return ""
 }
 
 var File_dedup_proto protoreflect.FileDescriptor
 
 const file_dedup_proto_rawDesc = "" +
 	"\n" +
-	"\vdedup.proto\x12\x05dedup\"'\n" +
-	"\x11SimilarityRequest\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"*\n" +
-	"\x12SimilarityResponse\x12\x14\n" +
-	"\x05score\x18\x01 \x01(\x02R\x05score2[\n" +
-	"\x11SimilarityService\x12F\n" +
-	"\x0fCheckSimilarity\x12\x18.dedup.SimilarityRequest\x1a\x19.dedup.SimilarityResponseB%Z#s3-dedup-engine/services/gateway/pbb\x06proto3"
+	"\vdedup.proto\x12\bdedup.v1\"\\\n" +
+	"\n" +
+	"ImageChunk\x12\x1b\n" +
+	"\timage_key\x18\x01 \x01(\tR\bimageKey\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x02 \x01(\x03R\ttotalSize\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\"\xba\x01\n" +
+	"\x14ProcessImageResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1b\n" +
+	"\timage_key\x18\x02 \x01(\tR\bimageKey\x12#\n" +
+	"\rquality_score\x18\x03 \x01(\x02R\fqualityScore\x12\x1a\n" +
+	"\bdistance\x18\x04 \x01(\x02R\bdistance\x12,\n" +
+	"\x12existing_image_key\x18\x05 \x01(\tR\x10existingImageKey2a\n" +
+	"\x11ImageDedupService\x12L\n" +
+	"\x12ProcessImageStream\x12\x14.dedup.v1.ImageChunk\x1a\x1e.dedup.v1.ProcessImageResponse(\x01B%Z#s3-dedup-engine/services/gateway/pbb\x06proto3"
 
 var (
 	file_dedup_proto_rawDescOnce sync.Once
@@ -135,12 +191,12 @@ func file_dedup_proto_rawDescGZIP() []byte {
 
 var file_dedup_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_dedup_proto_goTypes = []any{
-	(*SimilarityRequest)(nil),  // 0: dedup.SimilarityRequest
-	(*SimilarityResponse)(nil), // 1: dedup.SimilarityResponse
+	(*ImageChunk)(nil),           // 0: dedup.v1.ImageChunk
+	(*ProcessImageResponse)(nil), // 1: dedup.v1.ProcessImageResponse
 }
 var file_dedup_proto_depIdxs = []int32{
-	0, // 0: dedup.SimilarityService.CheckSimilarity:input_type -> dedup.SimilarityRequest
-	1, // 1: dedup.SimilarityService.CheckSimilarity:output_type -> dedup.SimilarityResponse
+	0, // 0: dedup.v1.ImageDedupService.ProcessImageStream:input_type -> dedup.v1.ImageChunk
+	1, // 1: dedup.v1.ImageDedupService.ProcessImageStream:output_type -> dedup.v1.ProcessImageResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

@@ -7,19 +7,34 @@ requires-python = ">=3.12"
 dependencies = [
     "grpcio>=1.78.0",
     "grpcio-tools>=1.78.0",
+    "huggingface-hub>=0.35.0",
+    "numpy>=2.1.0",
+    "opencv-python-headless>=4.10.0",
+    "pillow>=11.0.0",
+    "psycopg[binary]>=3.2.0",
+    "pypika>=0.51.1",
+    "rich>=14.0.0",
+    "torch>=2.5.0",
 ]
 
 [dependency-groups]
 dev = [
+    "grpc-stubs>=1.53.0.6",
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "ruff>=0.15.6",
+    "types-protobuf>=7.35.1.20260906",
 ]
 
 [tool.ruff]
 line-length = 88
 exclude = ["*_pb2.py", "*_pb2_grpc.py", "venv"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.mypy]
 python_version = "3.12"
@@ -28,6 +43,11 @@ explicit_package_bases = true
 exclude = ["pb/"]
 
 [[tool.mypy.overrides]]
-module = ["grpc", "grpc.*", "pb", "pb.*", "dedup_pb2", "dedup_pb2_grpc"]
+module = ["pb.dedup_pb2_grpc"]
+follow_imports = "skip"
 ignore_missing_imports = true
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["cv2", "cv2.*"]
+ignore_missing_imports = true

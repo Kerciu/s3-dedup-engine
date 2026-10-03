@@ -1,17 +1,23 @@
 syntax = "proto3";
 
-package dedup;
+package dedup.v1;
 
 option go_package = "s3-dedup-engine/services/gateway/pb";
 
-service SimilarityService {
-  rpc CheckSimilarity(SimilarityRequest) returns (SimilarityResponse);
+service ImageDedupService {
+  rpc ProcessImageStream(stream ImageChunk) returns (ProcessImageResponse);
 }
 
-message SimilarityRequest {
-  string text = 1;
+message ImageChunk {
+  string image_key = 1;
+  int64 total_size = 2;
+  bytes data = 3;
 }
 
-message SimilarityResponse {
-  float score = 1;
+message ProcessImageResponse {
+  string status = 1;
+  string image_key = 2;
+  float quality_score = 3;
+  float distance = 4;
+  string existing_image_key = 5;
 }

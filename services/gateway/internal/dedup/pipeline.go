@@ -7,9 +7,9 @@ import (
 	"s3-dedup-engine/services/gateway/internal/domain"
 )
 
-// DedupPipeline is a single stage in the soft-deduplication chain.
+// DedupPipeline is a single stage in the visual soft-deduplication chain.
 type DedupPipeline interface {
-	Process(ctx context.Context, ticket *domain.Ticket) (DedupDecision, error)
+	Process(ctx context.Context, img *domain.ImageRecord) (DedupDecision, error)
 }
 
 // DedupChain runs pipeline stages until a terminal upload decision is reached.
@@ -21,16 +21,15 @@ func NewDedupChain(stages ...DedupPipeline) *DedupChain {
 	return &DedupChain{stages: stages}
 }
 
-func (c *DedupChain) Execute(ctx context.Context, ticket *domain.Ticket) (DedupDecision, error) {
+func (c *DedupChain) Execute(ctx context.Context, img *domain.ImageRecord) (DedupDecision, error) {
 	for _, stage := range c.stages {
-		decision, err := stage.Process(ctx, ticket)
+		decision, err := stage.Process(ctx, img)
 		if err != nil {
 			return 0, fmt.Errorf("dedup stage: %w", err)
 		}
 		if decision != DecisionContinue {
 			if decision == DecisionSoftDedup {
-				ticket.SoftDedup = true
-				ticket.Payload = nil
+				img.SoftDedup = true
 			}
 			return decision, nil
 		}

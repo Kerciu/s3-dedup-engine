@@ -5,7 +5,7 @@ import warnings
 
 from . import dedup_pb2 as dedup__pb2
 
-GRPC_GENERATED_VERSION = '1.84.0'
+GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class SimilarityServiceStub:
+class ImageDedupServiceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -34,43 +34,43 @@ class SimilarityServiceStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.CheckSimilarity = channel.unary_unary(
-                '/dedup.SimilarityService/CheckSimilarity',
-                request_serializer=dedup__pb2.SimilarityRequest.SerializeToString,
-                response_deserializer=dedup__pb2.SimilarityResponse.FromString,
+        self.ProcessImageStream = channel.stream_unary(
+                '/dedup.v1.ImageDedupService/ProcessImageStream',
+                request_serializer=dedup__pb2.ImageChunk.SerializeToString,
+                response_deserializer=dedup__pb2.ProcessImageResponse.FromString,
                 _registered_method=True)
 
 
-class SimilarityServiceServicer:
+class ImageDedupServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def CheckSimilarity(self, request, context):
+    def ProcessImageStream(self, request_iterator, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_SimilarityServiceServicer_to_server(servicer, server):
+def add_ImageDedupServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'CheckSimilarity': grpc.unary_unary_rpc_method_handler(
-                    servicer.CheckSimilarity,
-                    request_deserializer=dedup__pb2.SimilarityRequest.FromString,
-                    response_serializer=dedup__pb2.SimilarityResponse.SerializeToString,
+            'ProcessImageStream': grpc.stream_unary_rpc_method_handler(
+                    servicer.ProcessImageStream,
+                    request_deserializer=dedup__pb2.ImageChunk.FromString,
+                    response_serializer=dedup__pb2.ProcessImageResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'dedup.SimilarityService', rpc_method_handlers)
+            'dedup.v1.ImageDedupService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('dedup.SimilarityService', rpc_method_handlers)
+    server.add_registered_method_handlers('dedup.v1.ImageDedupService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class SimilarityService:
+class ImageDedupService(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def CheckSimilarity(request,
+    def ProcessImageStream(request_iterator,
             target,
             options=(),
             channel_credentials=None,
@@ -80,12 +80,12 @@ class SimilarityService:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
+        return grpc.experimental.stream_unary(
+            request_iterator,
             target,
-            '/dedup.SimilarityService/CheckSimilarity',
-            dedup__pb2.SimilarityRequest.SerializeToString,
-            dedup__pb2.SimilarityResponse.FromString,
+            '/dedup.v1.ImageDedupService/ProcessImageStream',
+            dedup__pb2.ImageChunk.SerializeToString,
+            dedup__pb2.ProcessImageResponse.FromString,
             options,
             channel_credentials,
             insecure,

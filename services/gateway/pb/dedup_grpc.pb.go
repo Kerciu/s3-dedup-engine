@@ -19,103 +19,96 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SimilarityService_CheckSimilarity_FullMethodName = "/dedup.SimilarityService/CheckSimilarity"
+	ImageDedupService_ProcessImageStream_FullMethodName = "/dedup.v1.ImageDedupService/ProcessImageStream"
 )
 
-// SimilarityServiceClient is the client API for SimilarityService service.
+// ImageDedupServiceClient is the client API for ImageDedupService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type SimilarityServiceClient interface {
-	CheckSimilarity(ctx context.Context, in *SimilarityRequest, opts ...grpc.CallOption) (*SimilarityResponse, error)
+type ImageDedupServiceClient interface {
+	ProcessImageStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ImageChunk, ProcessImageResponse], error)
 }
 
-type similarityServiceClient struct {
+type imageDedupServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewSimilarityServiceClient(cc grpc.ClientConnInterface) SimilarityServiceClient {
-	return &similarityServiceClient{cc}
+func NewImageDedupServiceClient(cc grpc.ClientConnInterface) ImageDedupServiceClient {
+	return &imageDedupServiceClient{cc}
 }
 
-func (c *similarityServiceClient) CheckSimilarity(ctx context.Context, in *SimilarityRequest, opts ...grpc.CallOption) (*SimilarityResponse, error) {
+func (c *imageDedupServiceClient) ProcessImageStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ImageChunk, ProcessImageResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SimilarityResponse)
-	err := c.cc.Invoke(ctx, SimilarityService_CheckSimilarity_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &ImageDedupService_ServiceDesc.Streams[0], ImageDedupService_ProcessImageStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ImageChunk, ProcessImageResponse]{ClientStream: stream}
+	return x, nil
 }
 
-// SimilarityServiceServer is the server API for SimilarityService service.
-// All implementations must embed UnimplementedSimilarityServiceServer
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ImageDedupService_ProcessImageStreamClient = grpc.ClientStreamingClient[ImageChunk, ProcessImageResponse]
+
+// ImageDedupServiceServer is the server API for ImageDedupService service.
+// All implementations must embed UnimplementedImageDedupServiceServer
 // for forward compatibility.
-type SimilarityServiceServer interface {
-	CheckSimilarity(context.Context, *SimilarityRequest) (*SimilarityResponse, error)
-	mustEmbedUnimplementedSimilarityServiceServer()
+type ImageDedupServiceServer interface {
+	ProcessImageStream(grpc.ClientStreamingServer[ImageChunk, ProcessImageResponse]) error
+	mustEmbedUnimplementedImageDedupServiceServer()
 }
 
-// UnimplementedSimilarityServiceServer must be embedded to have
+// UnimplementedImageDedupServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedSimilarityServiceServer struct{}
+type UnimplementedImageDedupServiceServer struct{}
 
-func (UnimplementedSimilarityServiceServer) CheckSimilarity(context.Context, *SimilarityRequest) (*SimilarityResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CheckSimilarity not implemented")
+func (UnimplementedImageDedupServiceServer) ProcessImageStream(grpc.ClientStreamingServer[ImageChunk, ProcessImageResponse]) error {
+	return status.Error(codes.Unimplemented, "method ProcessImageStream not implemented")
 }
-func (UnimplementedSimilarityServiceServer) mustEmbedUnimplementedSimilarityServiceServer() {}
-func (UnimplementedSimilarityServiceServer) testEmbeddedByValue()                           {}
+func (UnimplementedImageDedupServiceServer) mustEmbedUnimplementedImageDedupServiceServer() {}
+func (UnimplementedImageDedupServiceServer) testEmbeddedByValue()                           {}
 
-// UnsafeSimilarityServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to SimilarityServiceServer will
+// UnsafeImageDedupServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ImageDedupServiceServer will
 // result in compilation errors.
-type UnsafeSimilarityServiceServer interface {
-	mustEmbedUnimplementedSimilarityServiceServer()
+type UnsafeImageDedupServiceServer interface {
+	mustEmbedUnimplementedImageDedupServiceServer()
 }
 
-func RegisterSimilarityServiceServer(s grpc.ServiceRegistrar, srv SimilarityServiceServer) {
-	// If the following call panics, it indicates UnimplementedSimilarityServiceServer was
+func RegisterImageDedupServiceServer(s grpc.ServiceRegistrar, srv ImageDedupServiceServer) {
+	// If the following call panics, it indicates UnimplementedImageDedupServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&SimilarityService_ServiceDesc, srv)
+	s.RegisterService(&ImageDedupService_ServiceDesc, srv)
 }
 
-func _SimilarityService_CheckSimilarity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SimilarityRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SimilarityServiceServer).CheckSimilarity(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SimilarityService_CheckSimilarity_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SimilarityServiceServer).CheckSimilarity(ctx, req.(*SimilarityRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+func _ImageDedupService_ProcessImageStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ImageDedupServiceServer).ProcessImageStream(&grpc.GenericServerStream[ImageChunk, ProcessImageResponse]{ServerStream: stream})
 }
 
-// SimilarityService_ServiceDesc is the grpc.ServiceDesc for SimilarityService service.
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ImageDedupService_ProcessImageStreamServer = grpc.ClientStreamingServer[ImageChunk, ProcessImageResponse]
+
+// ImageDedupService_ServiceDesc is the grpc.ServiceDesc for ImageDedupService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var SimilarityService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "dedup.SimilarityService",
-	HandlerType: (*SimilarityServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+var ImageDedupService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "dedup.v1.ImageDedupService",
+	HandlerType: (*ImageDedupServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "CheckSimilarity",
-			Handler:    _SimilarityService_CheckSimilarity_Handler,
+			StreamName:    "ProcessImageStream",
+			Handler:       _ImageDedupService_ProcessImageStream_Handler,
+			ClientStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "dedup.proto",
 }
