@@ -41,13 +41,13 @@ func DialDedup() (*DedupClient, error) {
 }
 
 // ProcessImage streams body in fixed-size chunks and awaits the worker decision.
-func (c *DedupClient) ProcessImage(ctx context.Context, imageKey string, totalSize int64, body io.Reader) (DedupResult, error) {
+func (c *DedupClient) ProcessImage(ctx context.Context, imageKey string, totalSize int64, threshold float32, body io.Reader) (DedupResult, error) {
 	stream, err := c.client.ProcessImageStream(ctx)
 	if err != nil {
 		return DedupResult{}, fmt.Errorf("open process image stream: %w", err)
 	}
 
-	if err := sendChunks(stream, imageKey, totalSize, body); err != nil {
+	if err := sendChunks(stream, imageKey, totalSize, threshold, body); err != nil {
 		return DedupResult{}, err
 	}
 
@@ -72,14 +72,14 @@ func (c *DedupClient) Close() error {
 	return c.conn.Close()
 }
 
-func sendChunks(stream pb.ImageDedupService_ProcessImageStreamClient, imageKey string, totalSize int64, body io.Reader) error {
+func sendChunks(stream pb.ImageDedupService_ProcessImageStreamClient, imageKey string, totalSize int64, threshold float32, body io.Reader) error {
 	buf := make([]byte, constants.StreamChunkBytes)
 	var sent int
 
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			if err := stream.Send(buildChunk(buf[:n], imageKey, totalSize, sent)); err != nil {
+			if err := stream.Send(buildChunk(buf[:n], imageKey, totalSize, threshold, sent)); err != nil {
 				if errors.Is(err, io.EOF) {
 					slog.Debug("ai worker closed the stream early", "image_key", imageKey, "chunks", sent)
 					return nil
@@ -107,11 +107,12 @@ func sendChunks(stream pb.ImageDedupService_ProcessImageStreamClient, imageKey s
 	return nil
 }
 
-func buildChunk(data []byte, imageKey string, totalSize int64, index int) *pb.ImageChunk {
+func buildChunk(data []byte, imageKey string, totalSize int64, threshold float32, index int) *pb.ImageChunk {
 	chunk := &pb.ImageChunk{Data: data}
 	if index == 0 {
 		chunk.ImageKey = imageKey
 		chunk.TotalSize = totalSize
+		chunk.Threshold = threshold
 	}
 	return chunk
 }

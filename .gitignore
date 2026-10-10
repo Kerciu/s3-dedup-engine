@@ -42,6 +42,9 @@ venv
 # datasets
 .datasets/
 
+# per-run gateway logs and metrics
+dedup-log/
+
 # python
 __pycache__/
 *.pyc

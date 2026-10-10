@@ -9,8 +9,8 @@ PG_VECTOR_EXTENSION: Final[str] = "vector"
 PG_HNSW_INDEX: Final[str] = "image_embeddings_embedding_hnsw"
 PG_HNSW_METHOD: Final[str] = "hnsw"
 PG_VECTOR_COSINE_OPS: Final[str] = "vector_cosine_ops"
-MAX_COSINE_DISTANCE: Final[float] = 0.10
 NO_NEIGHBOR_DISTANCE: Final[float] = 1.0
+PG_RESOLVE_LOCK_ID: Final[int] = 74821001
 
 STATUS_INSERTED: Final[str] = "inserted"
 STATUS_REPLACED: Final[str] = "replaced"

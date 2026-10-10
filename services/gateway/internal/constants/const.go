@@ -15,6 +15,8 @@ const (
 	DynamoWidthAttr           = "Width"
 	DynamoHeightAttr          = "Height"
 	DynamoSizeBytesAttr       = "SizeBytes"
+	DynamoChunkHashAttr       = "ChunkHash"
+	DynamoFullHashAttr        = "FullHash"
 	DynamoSKMeta              = "META"
 	PrefixFile                = "FILE#"
 	PrefixChunk               = "CHUNK#"
@@ -28,7 +30,18 @@ const (
 	StatusReplaced            = "replaced"
 	StatusDuplicateRejected   = "duplicate_rejected"
 	FlagImage                 = "image"
+	FlagDir                   = "dir"
+	FlagWorkers               = "workers"
 	FlagVerbose               = "verbose"
+	FlagThreshold             = "threshold"
+	DefaultWorkers            = 10
+	DefaultCosineThreshold    = 0.60
+	DedupLogDir               = "dedup-log"
+	DedupLogTimeLayout        = "02-01-2006_15-04-05"
+	SavedLogFileName          = "saved.log"
+	MetricsFileName           = "metrics.yaml"
+	S3StandardUSDPerGBMonth   = 0.023
+	BytesPerGiB               = 1024 * 1024 * 1024
 	EnvS3EndpointURL          = "S3_ENDPOINT_URL"
 	EnvDynamoEndpointURL      = "DYNAMODB_ENDPOINT_URL"
 	EnvAWSRegion              = "AWS_REGION"

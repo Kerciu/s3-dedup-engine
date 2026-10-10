@@ -7,10 +7,10 @@ from typing import Callable, List
 import pytest
 
 from const.pg import (
-    MAX_COSINE_DISTANCE,
     NO_NEIGHBOR_DISTANCE,
     PG_DSN_DEFAULT,
     PG_DSN_ENV,
+    PG_RESOLVE_LOCK_ID,
     STATUS_DUPLICATE_REJECTED,
     STATUS_INSERTED,
     STATUS_REPLACED,
@@ -18,6 +18,7 @@ from const.pg import (
 from const.sscd import EMBEDDING_DIMENSIONS
 from db import EmbeddingRepository, _to_vector_literal, resolve_dsn
 from sql import (
+    AdvisoryLockQuery,
     ClosestStoredEmbeddingQuery,
     CreateEmbeddingsTableQuery,
     CreateHnswIndexQuery,
@@ -29,8 +30,9 @@ from sql import (
 from tests.conftest import FakeCursor, Row
 
 InstallDb = Callable[..., FakeCursor]
-NEAR = MAX_COSINE_DISTANCE / 2
-FAR = MAX_COSINE_DISTANCE * 5
+THRESHOLD = 0.60
+NEAR = THRESHOLD / 2
+FAR = THRESHOLD * 5
 
 
 def test_resolve_dsn_prefers_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,11 +82,13 @@ def test_empty_table_inserts_with_the_no_neighbor_distance(
 ) -> None:
     cursor = fake_db([])
     outcome = EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "new.jpg", unit_embedding, 0.5
+        "new.jpg", unit_embedding, 0.5, THRESHOLD
     )
     assert outcome.status == STATUS_INSERTED
     assert outcome.distance == NO_NEIGHBOR_DISTANCE
     assert outcome.existing_image_key == ""
+    assert cursor.statements[0].sql == AdvisoryLockQuery().sql
+    assert cursor.statements[0].positional() == (PG_RESOLVE_LOCK_ID,)
     assert cursor.executed(UpsertEmbeddingQuery().sql)
 
 
@@ -94,7 +98,7 @@ def test_distant_neighbor_inserts_and_reports_its_distance(
     rows: List[Row] = [(1, "other.jpg", 0.9, FAR)]
     cursor = fake_db(rows)
     outcome = EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "new.jpg", unit_embedding, 0.1
+        "new.jpg", unit_embedding, 0.1, THRESHOLD
     )
     assert outcome.status == STATUS_INSERTED
     assert outcome.distance == pytest.approx(FAR)
@@ -109,7 +113,7 @@ def test_near_neighbor_with_equal_or_lower_quality_is_rejected(
     rows: List[Row] = [(7, "incumbent.jpg", 0.5, NEAR), (0.5,)]
     cursor = fake_db(rows)
     outcome = EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "candidate.jpg", unit_embedding, candidate_quality
+        "candidate.jpg", unit_embedding, candidate_quality, THRESHOLD
     )
     assert outcome.status == STATUS_DUPLICATE_REJECTED
     assert outcome.existing_image_key == "incumbent.jpg"
@@ -125,7 +129,7 @@ def test_near_neighbor_with_higher_quality_replaces_in_place(
     rows: List[Row] = [(7, "incumbent.jpg", 0.4, NEAR), (0.4,)]
     cursor = fake_db(rows)
     outcome = EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "better.jpg", unit_embedding, 0.95
+        "better.jpg", unit_embedding, 0.95, THRESHOLD
     )
     assert outcome.status == STATUS_REPLACED
     assert outcome.existing_image_key == "incumbent.jpg"
@@ -142,9 +146,10 @@ def test_replace_locks_the_incumbent_before_updating(
     rows: List[Row] = [(7, "incumbent.jpg", 0.4, NEAR), (0.4,)]
     cursor = fake_db(rows)
     EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "better.jpg", unit_embedding, 0.95
+        "better.jpg", unit_embedding, 0.95, THRESHOLD
     )
     executed = [statement.sql for statement in cursor.statements]
+    assert executed[0] == AdvisoryLockQuery().sql
     assert executed.index(LockQualityScoreQuery().sql) < executed.index(
         PromoteEmbeddingQuery().sql
     )
@@ -156,7 +161,7 @@ def test_lock_uses_the_quality_score_read_under_the_lock(
     rows: List[Row] = [(7, "incumbent.jpg", 0.1, NEAR), (0.99,)]
     fake_db(rows)
     outcome = EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "candidate.jpg", unit_embedding, 0.5
+        "candidate.jpg", unit_embedding, 0.5, THRESHOLD
     )
     assert outcome.status == STATUS_DUPLICATE_REJECTED
 
@@ -168,7 +173,7 @@ def test_vanished_incumbent_raises(
     fake_db(rows)
     with pytest.raises(RuntimeError, match="vanished"):
         EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-            "candidate.jpg", unit_embedding, 0.5
+            "candidate.jpg", unit_embedding, 0.5, THRESHOLD
         )
 
 
@@ -177,8 +182,9 @@ def test_max_distance_is_configurable(
 ) -> None:
     rows: List[Row] = [(1, "other.jpg", 0.9, 0.4), (0.9,)]
     fake_db(rows)
-    repository = EmbeddingRepository(dsn="postgresql://fake/db", max_distance=0.5)
-    outcome = repository.resolve("candidate.jpg", unit_embedding, 0.1)
+    outcome = EmbeddingRepository(dsn="postgresql://fake/db").resolve(
+        "candidate.jpg", unit_embedding, 0.1, max_distance=0.5
+    )
     assert outcome.status == STATUS_DUPLICATE_REJECTED
 
 
@@ -187,6 +193,6 @@ def test_nearest_query_orders_by_cosine_distance(
 ) -> None:
     cursor = fake_db([])
     EmbeddingRepository(dsn="postgresql://fake/db").resolve(
-        "new.jpg", unit_embedding, 0.5
+        "new.jpg", unit_embedding, 0.5, THRESHOLD
     )
     assert cursor.executed(ClosestStoredEmbeddingQuery().sql)

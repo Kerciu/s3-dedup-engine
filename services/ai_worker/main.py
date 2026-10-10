@@ -41,12 +41,14 @@ class SpooledImage:
         self.image_key = ""
         self.declared_size = 0
         self.received_bytes = 0
+        self.threshold = 0.0
 
     def consume(self, chunks: Iterator[dedup_pb2.ImageChunk]) -> None:
-        """Drains the request stream, capturing key and size metadata along the way."""
+        """Drains the request stream, capturing key, size and threshold metadata."""
         for chunk in chunks:
             if not self.image_key and chunk.image_key:
                 self.image_key = chunk.image_key
+                self.threshold = chunk.threshold
             if not self.declared_size and chunk.total_size:
                 self.declared_size = chunk.total_size
             if chunk.data:
@@ -114,7 +116,9 @@ class ImageDedupService(dedup_pb2_grpc.ImageDedupServiceServicer):
             quality.contrast,
         )
 
-        outcome = self.repository.resolve(image.image_key, embedding, quality.total)
+        outcome = self.repository.resolve(
+            image.image_key, embedding, quality.total, image.threshold
+        )
         log.info(
             "dedup decision key=%s status=%s distance=%.4f existing=%s",
             image.image_key,

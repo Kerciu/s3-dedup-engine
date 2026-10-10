@@ -98,7 +98,10 @@ class FakeCursor:
     def execute(self, sql: str, params: SqlParams = None) -> FakeCursor:
         """Records the statement and pops the next queued row for SELECTs."""
         self.statements.append(Statement(sql, params))
-        if sql.strip().upper().startswith("SELECT"):
+        if (
+            sql.strip().upper().startswith("SELECT")
+            and "pg_advisory_xact_lock" not in sql.lower()
+        ):
             self._fetched = self.rows.pop(0) if self.rows else None
         return self
 
@@ -192,6 +195,7 @@ class FakeRepository:
         image_key: str,
         embedding: Sequence[float],
         quality_score: float,
+        max_distance: float,
     ) -> DedupOutcome:
         """Records the call and returns the configured outcome."""
         self.resolved.append((image_key, len(embedding), quality_score))

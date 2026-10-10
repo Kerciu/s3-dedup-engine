@@ -11,10 +11,10 @@ from psycopg import Cursor
 from psycopg.rows import TupleRow
 
 from const.pg import (
-    MAX_COSINE_DISTANCE,
     NO_NEIGHBOR_DISTANCE,
     PG_DSN_DEFAULT,
     PG_DSN_ENV,
+    PG_RESOLVE_LOCK_ID,
     STATUS_DUPLICATE_REJECTED,
     STATUS_INSERTED,
     STATUS_REPLACED,
@@ -22,6 +22,7 @@ from const.pg import (
 from const.sscd import EMBEDDING_DIMENSIONS
 from logger import get_logger
 from sql import (
+    AdvisoryLockQuery,
     ClosestStoredEmbeddingQuery,
     CreateEmbeddingsTableQuery,
     CreateHnswIndexQuery,
@@ -64,7 +65,6 @@ class EmbeddingRepository:
     """Owns the embeddings schema and the insert, replace or reject decision."""
 
     dsn: str = field(default_factory=resolve_dsn)
-    max_distance: float = MAX_COSINE_DISTANCE
 
     def init_schema(self) -> None:
         """Creates the vector extension, embeddings table and HNSW index if absent."""
@@ -78,18 +78,20 @@ class EmbeddingRepository:
         image_key: str,
         embedding: Sequence[float],
         quality_score: float,
+        max_distance: float,
     ) -> DedupOutcome:
         """Inserts, replaces or rejects the candidate inside a single transaction."""
         vector = _to_vector_literal(embedding)
         with psycopg.connect(self.dsn) as conn:
             with conn.transaction(), conn.cursor() as cur:
+                cur.execute(AdvisoryLockQuery().sql, (PG_RESOLVE_LOCK_ID,))
                 neighbor = self._nearest(cur, vector)
                 log.debug(
                     "nearest neighbor for %s: %s",
                     image_key,
                     neighbor or "none",
                 )
-                if neighbor is None or neighbor.distance > self.max_distance:
+                if neighbor is None or neighbor.distance > max_distance:
                     self._insert(cur, image_key, vector, quality_score)
                     distance = (
                         NO_NEIGHBOR_DISTANCE if neighbor is None else neighbor.distance

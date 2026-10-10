@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x64\x65\x64up.proto\x12\x08\x64\x65\x64up.v1\"A\n\nImageChunk\x12\x11\n\timage_key\x18\x01 \x01(\t\x12\x12\n\ntotal_size\x18\x02 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\"~\n\x14ProcessImageResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x11\n\timage_key\x18\x02 \x01(\t\x12\x15\n\rquality_score\x18\x03 \x01(\x02\x12\x10\n\x08\x64istance\x18\x04 \x01(\x02\x12\x1a\n\x12\x65xisting_image_key\x18\x05 \x01(\t2a\n\x11ImageDedupService\x12L\n\x12ProcessImageStream\x12\x14.dedup.v1.ImageChunk\x1a\x1e.dedup.v1.ProcessImageResponse(\x01\x42%Z#s3-dedup-engine/services/gateway/pbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x64\x65\x64up.proto\x12\x08\x64\x65\x64up.v1\"T\n\nImageChunk\x12\x11\n\timage_key\x18\x01 \x01(\t\x12\x12\n\ntotal_size\x18\x02 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x11\n\tthreshold\x18\x04 \x01(\x02\"~\n\x14ProcessImageResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x11\n\timage_key\x18\x02 \x01(\t\x12\x15\n\rquality_score\x18\x03 \x01(\x02\x12\x10\n\x08\x64istance\x18\x04 \x01(\x02\x12\x1a\n\x12\x65xisting_image_key\x18\x05 \x01(\t2a\n\x11ImageDedupService\x12L\n\x12ProcessImageStream\x12\x14.dedup.v1.ImageChunk\x1a\x1e.dedup.v1.ProcessImageResponse(\x01\x42%Z#s3-dedup-engine/services/gateway/pbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,9 +33,9 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z#s3-dedup-engine/services/gateway/pb'
   _globals['_IMAGECHUNK']._serialized_start=25
-  _globals['_IMAGECHUNK']._serialized_end=90
-  _globals['_PROCESSIMAGERESPONSE']._serialized_start=92
-  _globals['_PROCESSIMAGERESPONSE']._serialized_end=218
-  _globals['_IMAGEDEDUPSERVICE']._serialized_start=220
-  _globals['_IMAGEDEDUPSERVICE']._serialized_end=317
+  _globals['_IMAGECHUNK']._serialized_end=109
+  _globals['_PROCESSIMAGERESPONSE']._serialized_start=111
+  _globals['_PROCESSIMAGERESPONSE']._serialized_end=237
+  _globals['_IMAGEDEDUPSERVICE']._serialized_start=239
+  _globals['_IMAGEDEDUPSERVICE']._serialized_end=336
 # @@protoc_insertion_point(module_scope)

@@ -18,4 +18,5 @@ type ImageRecord struct {
 	QualityScore     float32 `json:"quality_score,omitempty"`
 	SemanticDistance float32 `json:"semantic_distance,omitempty"`
 	ExistingImageKey string  `json:"existing_image_key,omitempty"`
+	DeletedBytes     int64   `json:"-"`
 }

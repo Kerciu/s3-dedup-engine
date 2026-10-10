@@ -18,15 +18,19 @@ type FileMeta struct {
 	Width     int
 	Height    int
 	SizeBytes int64
+	ChunkHash string
+	FullHash  string
 }
 
 // DynamoClient indexes file-name and chunk/full-hash records for visual dedup.
 type DynamoClient interface {
 	GetFileByName(ctx context.Context, fileName string) (FileMeta, bool, error)
 	PutFileByName(ctx context.Context, fileName string, meta FileMeta) error
+	DeleteFileByName(ctx context.Context, fileName string) error
 	QueryChunkCandidates(ctx context.Context, chunkHash string) (bool, error)
 	GetByChunkAndFull(ctx context.Context, chunkHash, fullHash string) (string, bool, error)
 	PutChunkFull(ctx context.Context, chunkHash, fullHash, s3Key, fileName string) error
+	DeleteChunkFull(ctx context.Context, chunkHash, fullHash string) error
 }
 
 // DynamoStore is a LocalStack-compatible DynamoClient implementation.
@@ -66,10 +70,26 @@ func (d *DynamoStore) PutFileByName(ctx context.Context, fileName string, meta F
 			constants.DynamoWidthAttr:     &types.AttributeValueMemberN{Value: strconv.Itoa(meta.Width)},
 			constants.DynamoHeightAttr:    &types.AttributeValueMemberN{Value: strconv.Itoa(meta.Height)},
 			constants.DynamoSizeBytesAttr: &types.AttributeValueMemberN{Value: strconv.FormatInt(meta.SizeBytes, 10)},
+			constants.DynamoChunkHashAttr: &types.AttributeValueMemberS{Value: meta.ChunkHash},
+			constants.DynamoFullHashAttr:  &types.AttributeValueMemberS{Value: meta.FullHash},
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("dynamodb put file by name: %w", err)
+	}
+	return nil
+}
+
+func (d *DynamoStore) DeleteFileByName(ctx context.Context, fileName string) error {
+	_, err := d.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]types.AttributeValue{
+			constants.DynamoPKAttr: &types.AttributeValueMemberS{Value: constants.PrefixFile + fileName},
+			constants.DynamoSKAttr: &types.AttributeValueMemberS{Value: constants.DynamoSKMeta},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("dynamodb delete file by name: %w", err)
 	}
 	return nil
 }
@@ -129,6 +149,20 @@ func (d *DynamoStore) PutChunkFull(ctx context.Context, chunkHash, fullHash, s3K
 	return nil
 }
 
+func (d *DynamoStore) DeleteChunkFull(ctx context.Context, chunkHash, fullHash string) error {
+	_, err := d.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]types.AttributeValue{
+			constants.DynamoPKAttr: &types.AttributeValueMemberS{Value: constants.PrefixChunk + chunkHash},
+			constants.DynamoSKAttr: &types.AttributeValueMemberS{Value: constants.PrefixFull + fullHash},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("dynamodb delete chunk+full: %w", err)
+	}
+	return nil
+}
+
 func fileMetaFromItem(item map[string]types.AttributeValue) FileMeta {
 	meta := FileMeta{}
 	if v, ok := item[constants.DynamoS3KeyAttr].(*types.AttributeValueMemberS); ok {
@@ -142,6 +176,12 @@ func fileMetaFromItem(item map[string]types.AttributeValue) FileMeta {
 	}
 	if v, ok := item[constants.DynamoSizeBytesAttr].(*types.AttributeValueMemberN); ok {
 		meta.SizeBytes, _ = strconv.ParseInt(v.Value, 10, 64)
+	}
+	if v, ok := item[constants.DynamoChunkHashAttr].(*types.AttributeValueMemberS); ok {
+		meta.ChunkHash = v.Value
+	}
+	if v, ok := item[constants.DynamoFullHashAttr].(*types.AttributeValueMemberS); ok {
+		meta.FullHash = v.Value
 	}
 	return meta
 }

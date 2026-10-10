@@ -5,18 +5,21 @@ from typing import ClassVar as _ClassVar, Optional as _Optional
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class ImageChunk(_message.Message):
-    __slots__ = ("image_key", "total_size", "data")
+    __slots__ = ("image_key", "total_size", "data", "threshold")
     IMAGE_KEY_FIELD_NUMBER: _ClassVar[int]
     TOTAL_SIZE_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
+    THRESHOLD_FIELD_NUMBER: _ClassVar[int]
     image_key: str
     total_size: int
     data: bytes
+    threshold: float
     def __init__(
         self,
         image_key: _Optional[str] = ...,
         total_size: _Optional[int] = ...,
         data: _Optional[bytes] = ...,
+        threshold: _Optional[float] = ...,
     ) -> None: ...
 
 class ProcessImageResponse(_message.Message):

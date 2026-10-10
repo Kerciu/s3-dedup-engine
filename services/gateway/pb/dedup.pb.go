@@ -26,6 +26,7 @@ type ImageChunk struct {
 	ImageKey      string                 `protobuf:"bytes,1,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
 	TotalSize     int64                  `protobuf:"varint,2,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
 	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	Threshold     float32                `protobuf:"fixed32,4,opt,name=threshold,proto3" json:"threshold,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -79,6 +80,13 @@ func (x *ImageChunk) GetData() []byte {
 		return x.Data
 	}
 	return nil
+}
+
+func (x *ImageChunk) GetThreshold() float32 {
+	if x != nil {
+		return x.Threshold
+	}
+	return 0
 }
 
 type ProcessImageResponse struct {
@@ -161,13 +169,14 @@ var File_dedup_proto protoreflect.FileDescriptor
 
 const file_dedup_proto_rawDesc = "" +
 	"\n" +
-	"\vdedup.proto\x12\bdedup.v1\"\\\n" +
+	"\vdedup.proto\x12\bdedup.v1\"z\n" +
 	"\n" +
 	"ImageChunk\x12\x1b\n" +
 	"\timage_key\x18\x01 \x01(\tR\bimageKey\x12\x1d\n" +
 	"\n" +
 	"total_size\x18\x02 \x01(\x03R\ttotalSize\x12\x12\n" +
-	"\x04data\x18\x03 \x01(\fR\x04data\"\xba\x01\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x1c\n" +
+	"\tthreshold\x18\x04 \x01(\x02R\tthreshold\"\xba\x01\n" +
 	"\x14ProcessImageResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1b\n" +
 	"\timage_key\x18\x02 \x01(\tR\bimageKey\x12#\n" +

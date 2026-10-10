@@ -178,6 +178,14 @@ class PromoteEmbeddingQuery(SQLQuery):
 
 
 @dataclass(frozen=True)
+class AdvisoryLockQuery(SQLQuery):
+    """Serializes dedup decisions until the current transaction ends."""
+
+    def build(self) -> str:
+        return "SELECT pg_advisory_xact_lock(%s)"
+
+
+@dataclass(frozen=True)
 class CreateVectorExtensionQuery(SQLQuery):
     """Enables the pgvector extension when it is not already present."""
 
