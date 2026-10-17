@@ -31,6 +31,7 @@ const (
 	StatusDuplicateRejected   = "duplicate_rejected"
 	FlagImage                 = "image"
 	FlagDir                   = "dir"
+	FlagList                  = "list"
 	FlagWorkers               = "workers"
 	FlagVerbose               = "verbose"
 	FlagThreshold             = "threshold"
@@ -40,6 +41,13 @@ const (
 	DedupLogTimeLayout        = "02-01-2006_15-04-05"
 	SavedLogFileName          = "saved.log"
 	MetricsFileName           = "metrics.yaml"
+	EventsFileName            = "events.jsonl"
+	SummaryFileName           = "summary.json"
+	OutcomeInserted           = "inserted"
+	OutcomeHashDuplicate      = "hash_duplicate"
+	OutcomeSemanticDuplicate  = "semantic_duplicate"
+	OutcomeReplaced           = "replaced"
+	OutcomeFailed             = "failed"
 	S3StandardUSDPerGBMonth   = 0.023
 	BytesPerGiB               = 1024 * 1024 * 1024
 	EnvS3EndpointURL          = "S3_ENDPOINT_URL"

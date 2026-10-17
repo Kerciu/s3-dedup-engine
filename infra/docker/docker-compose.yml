@@ -86,6 +86,9 @@ services:
       - METADATA_TABLE=ticket-hashes
       - REDIS_ADDR=redis:6379
       - PG_DSN=postgresql://dedup:dedup@postgres:5432/dedup
+      - AI_EVENTS_PATH=/events/ai-events.jsonl
+    volumes:
+      - ../../services/gateway/dedup-log:/events
     ports:
       - "50051:50051"
 

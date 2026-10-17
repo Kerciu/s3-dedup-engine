@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"
@@ -53,13 +55,24 @@ func run(ctx context.Context) (err error) {
 
 	imagePath := flag.String(constants.FlagImage, "", "path to one image file (.jpg, .png)")
 	dirPath := flag.String(constants.FlagDir, "", "directory of images to process")
+	listPath := flag.String(constants.FlagList, "", "text file of image paths, one per line")
 	workers := flag.Int(constants.FlagWorkers, constants.DefaultWorkers, "maximum concurrent image workers")
 	verbose := flag.Bool(constants.FlagVerbose, false, "enable debug logging on the terminal")
 	threshold := flag.Float64(constants.FlagThreshold, constants.DefaultCosineThreshold, "maximum cosine distance treated as a near-duplicate")
 	flag.Parse()
 
-	if (*imagePath == "") == (*dirPath == "") {
-		return fmt.Errorf("provide exactly one of --%s or --%s", constants.FlagImage, constants.FlagDir)
+	set := 0
+	if *imagePath != "" {
+		set++
+	}
+	if *dirPath != "" {
+		set++
+	}
+	if *listPath != "" {
+		set++
+	}
+	if set != 1 {
+		return fmt.Errorf("provide exactly one of --%s, --%s, or --%s", constants.FlagImage, constants.FlagDir, constants.FlagList)
 	}
 	if *workers < 1 {
 		return fmt.Errorf("--%s must be at least 1", constants.FlagWorkers)
@@ -71,7 +84,7 @@ func run(ctx context.Context) (err error) {
 	}
 	cleanup = cleanupFn
 
-	paths, err := resolvePaths(*imagePath, *dirPath)
+	paths, err := resolvePaths(*imagePath, *dirPath, *listPath)
 	if err != nil {
 		return err
 	}
@@ -94,10 +107,14 @@ func run(ctx context.Context) (err error) {
 		dedup.NewFullHashPipeline(clients.Dynamo),
 		dedup.NewSimilarityPipeline(dedupClient, clients.S3, *threshold),
 	)
-	collector := analytics.NewCollector()
+	collector, err := analytics.NewCollectorWithEvents(logDir)
+	if err != nil {
+		return fmt.Errorf("init event writer: %w", err)
+	}
+	defer collector.Close()
 
 	var processErr error
-	if *dirPath != "" {
+	if *dirPath != "" || *listPath != "" {
 		processErr = processDirectory(ctx, clients, chain, paths, *workers, collector)
 	} else {
 		img, imgErr := processImage(ctx, clients, chain, paths[0])
@@ -117,9 +134,12 @@ func run(ctx context.Context) (err error) {
 	return nil
 }
 
-func resolvePaths(imagePath, dirPath string) ([]string, error) {
+func resolvePaths(imagePath, dirPath, listPath string) ([]string, error) {
 	if imagePath != "" {
 		return []string{imagePath}, nil
+	}
+	if listPath != "" {
+		return loadList(listPath)
 	}
 	paths, err := scanImages(dirPath)
 	if err != nil {
@@ -127,6 +147,32 @@ func resolvePaths(imagePath, dirPath string) ([]string, error) {
 	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("no images found in %s", dirPath)
+	}
+	return paths, nil
+}
+
+func loadList(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open path list: %w", err)
+	}
+	defer f.Close()
+
+	var paths []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		paths = append(paths, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read path list: %w", err)
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no image paths in %s", path)
 	}
 	return paths, nil
 }
@@ -263,17 +309,34 @@ func processImage(ctx context.Context, clients *storage.Clients, chain *dedup.De
 	slog.Info("uploaded metadata", "id", img.ID)
 
 	if img.SoftDedup {
+		img.UploadSkipped = true
 		slog.Info("soft-dedup skipped image upload", "file", img.FileName)
 		return img, nil
 	}
 
 	s3Key := constants.S3PayloadKeyPrefix + img.FileName
+	uploadStarted := time.Now()
 	if err := uploadImage(ctx, clients, img, s3Key); err != nil {
 		return img, err
 	}
+	img.UploadBytes = img.SizeBytes
+	img.Stages = append(img.Stages, domain.StageTiming{
+		Name:       "upload",
+		Decision:   "accept_full",
+		DurationMs: float64(time.Since(uploadStarted).Microseconds()) / 1000,
+	})
 	slog.Info("uploaded image", "s3_key", s3Key, "replace_existing", img.ReplaceExisting)
+	retireStarted := time.Now()
 	if err := retireReplaced(ctx, clients, img); err != nil {
 		return img, err
+	}
+	if img.ReplaceExisting && img.DeletedBytes > 0 {
+		img.RetireBytes = img.DeletedBytes
+		img.Stages = append(img.Stages, domain.StageTiming{
+			Name:       "retire",
+			Decision:   "accept_full",
+			DurationMs: float64(time.Since(retireStarted).Microseconds()) / 1000,
+		})
 	}
 	return img, nil
 }

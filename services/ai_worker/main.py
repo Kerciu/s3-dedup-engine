@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from const.grpc import (
 )
 from db import EmbeddingRepository
 from embeddings.sscd import SscdEmbedder, get_embedder
+from events import append_event
 from logger import get_logger, setup_logging
 from pb import dedup_pb2, dedup_pb2_grpc
 from quality.score import QualityScorer, get_scorer
@@ -104,8 +106,12 @@ class ImageDedupService(dedup_pb2_grpc.ImageDedupServiceServicer):
                 image.declared_size,
                 image.spilled_to_disk,
             )
+            score_started = time.perf_counter()
             quality = self.scorer.score(image.reader())
+            score_ms = (time.perf_counter() - score_started) * 1000
+            embed_started = time.perf_counter()
             embedding = self.embedder.embed(image.reader())
+            embed_ms = (time.perf_counter() - embed_started) * 1000
 
         log.info(
             "quality key=%s total=%.4f resolution=%.4f sharpness=%.4f contrast=%.4f",
@@ -116,15 +122,29 @@ class ImageDedupService(dedup_pb2_grpc.ImageDedupServiceServicer):
             quality.contrast,
         )
 
+        resolve_started = time.perf_counter()
         outcome = self.repository.resolve(
             image.image_key, embedding, quality.total, image.threshold
         )
+        resolve_ms = (time.perf_counter() - resolve_started) * 1000
         log.info(
             "dedup decision key=%s status=%s distance=%.4f existing=%s",
             image.image_key,
             outcome.status,
             outcome.distance,
             outcome.existing_image_key or "-",
+        )
+        append_event(
+            {
+                "image_key": image.image_key,
+                "status": outcome.status,
+                "distance": outcome.distance,
+                "existing_image_key": outcome.existing_image_key,
+                "quality_score": quality.total,
+                "score_ms": round(score_ms, 3),
+                "embed_ms": round(embed_ms, 3),
+                "resolve_ms": round(resolve_ms, 3),
+            }
         )
         return dedup_pb2.ProcessImageResponse(
             status=outcome.status,

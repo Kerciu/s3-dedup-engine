@@ -2,6 +2,9 @@ package analytics
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -73,5 +76,35 @@ func TestReplacementRemovalDoesNotInflateUploadPercent(t *testing.T) {
 	}
 	if snap.BytesRemovedFromBucket != 10_000_000 || snap.TotalStorageSavedBytes != 10_000_000 {
 		t.Fatalf("removed = %d total %d", snap.BytesRemovedFromBucket, snap.TotalStorageSavedBytes)
+	}
+}
+
+func TestEventWriterAppendsImageAndSummary(t *testing.T) {
+	dir := t.TempDir()
+	collector, err := NewCollectorWithEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	collector.Record(&domain.ImageRecord{
+		FileName:         "Q00003.jpg",
+		SizeBytes:        12,
+		SoftDedup:        true,
+		ExistingImageKey: "R326040.jpg",
+		SemanticDistance: 0.4,
+	}, nil)
+	events, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(events), `"file":"Q00003.jpg"`) || !strings.Contains(string(events), `"outcome":"semantic_duplicate"`) {
+		t.Fatalf("events = %s", events)
+	}
+	summary, err := os.ReadFile(filepath.Join(dir, "summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(summary), `"semantic_duplicate_count": 1`) {
+		t.Fatalf("summary = %s", summary)
 	}
 }
