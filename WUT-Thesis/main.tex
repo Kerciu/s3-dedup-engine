@@ -1,0 +1,170 @@
+%-----------------------------------------------
+%  Engineer's & Master's Thesis Template
+%  Copyleft by Artur M. Brodzki & Piotr Woźniak
+%  Warsaw University of Technology, 2019-2022
+%-----------------------------------------------
+
+\documentclass[
+    bindingoffset=5mm,  % Binding offset
+    footnoteindent=3mm, % Footnote indent
+    hyphenation=true    % Hyphenation turn on/off
+]{src/wut-thesis}
+
+\graphicspath{{tex/img/}} % Katalog z obrazkami.
+\addbibresource{bibliografia.bib} % Plik .bib z bibliografią
+
+%-------------------------------------------------------------
+% Wybór wydziału:
+%  \facultyeiti: Wydział Elektroniki i Technik Informacyjnych
+%  \facultymeil: Wydział Mechaniczny Energetyki i Lotnictwa
+% --
+% Rodzaj pracy: \EngineerThesis, \MasterThesis
+% --
+% Wybór języka: \langpol, \langeng
+%-------------------------------------------------------------
+\facultyeiti    % Wydział Elektroniki i Technik Informacyjnych
+\EngineerThesis % Praca inżynierska
+\langpol % Praca w języku polskim
+
+\begin{document}
+
+%------------------
+% Strona tytułowa
+%------------------
+\instytut{Informatyki}
+\kierunek{Informatyka}
+\specjalnosc{Sztuczna Inteligencja}
+\title{
+    Projekt inteligentnej bramy (Gateway) oraz narzędzia CLI do \\ semantycznej deduplikacji danych w systemach Cloud Storage
+}
+% Title in English for English theses
+% In English theses, you may remove this command
+\engtitle{
+    Design of an intelligent gateway and a CLI tool \\
+    for semantic data deduplication in cloud storage systems
+}
+
+\author{Kacper Górski}
+\album{331379}
+\promotor{dr. inż. Łukasz Lepak}
+\date{\the\year}
+\maketitle
+
+%-------------------------------------
+% Streszczenie po polsku dla \langpol
+% English abstract if \langeng is set
+%-------------------------------------
+\cleardoublepage % Zaczynamy od nieparzystej strony
+\abstract
+Chmurowe magazyny obiektowe, takie jak Amazon S3, pozwalają na niemal nieograniczoną skalowalność przechowywania danych. W systemach, do których trafia duża liczba plików graficznych, np. w serwisach e-commerce, mediach społecznościowych czy archiwach zdjęć, model rozliczeniowy Pay-As-You-Go sprawia jednak, że utrzymywanie redundantnych danych generuje wysokie koszty. Ten sam obraz jest często przesyłany wielokrotnie w różnych rozdzielczościach, formatach (np. PNG i silnie skompresowany JPEG) lub z drobnymi artefaktami kompresji. Klasyczne podejście do weryfikacji tożsamości danych, oparte na funkcjach skrótu (takich jak MD5 czy SHA-256), okazuje się w takiej sytuacji niewystarczające. Ze względu na tzw. efekt lawinowy zmiana choćby jednego bajtu pliku daje zupełnie inny skrót, przez co obrazy niemal identyczne wizualnie nie są rozpoznawane jako duplikaty, a przestrzeń dyskowa jest marnowana.
+
+W pracy przedstawiono koncepcję oraz implementację inteligentnej bramy deduplikacyjnej, która wykorzystuje modele sztucznej inteligencji do analizy semantycznej przesyłanych obrazów. Zamiast porównywać zawartość bajtową, system przekształca każdy obraz w wielowymiarowy wektor (ang. \emph{embedding}) za pomocą modelu SSCD, przeznaczonego do wykrywania kopii obrazów, a podobieństwo wektorów wyznacza miarą kosinusową (ang. \emph{cosine similarity}). Gdy zostanie wykryty obraz o wysokim stopniu podobieństwa do już przechowywanego, mechanizm porównuje jakość obu wersji na podstawie metryk bezreferencyjnych, m.in. BRISQUE oraz wariancji laplasjanu jako miary ostrości. Dzięki temu duplikaty gorszej jakości są odrzucane, a słabsze wersje obrazów mogą zostać zastąpione wersjami o lepszej jakości.
+
+Zaimplementowana architektura hybrydowa składa się z autorskiego narzędzia CLI napisanego w języku Go, które pośredniczy w operacjach zapisu, oraz połączonego z nim lokalnego mikroserwisu w języku Python, w którym uruchomiony jest model wektorowy. Logika przetwarzania działa w środowisku lokalnym i jest bezpośrednio zintegrowana z usługami chmury AWS. W celu zwiększenia wydajności proces podzielono na dwa etapy. W pierwszym dokładne duplikaty są wykrywane z użyciem bazy klucz-wartość Amazon DynamoDB, co pozwala odrzucić powtarzające się pliki w czasie $O(1)$. W drugim nowe dane poddawane są właściwej analizie semantycznej. Reprezentacje wektorowe przechowywane są w bazie PostgreSQL z rozszerzeniem pgvector, umożliwiającym wydajne wyszukiwanie najbliższych sąsiadów, natomiast zdeduplikowane pliki trafiają do standardowych zasobników Amazon S3. Część badawcza pracy osadzona jest w metodyce FinOps i ma na celu określenie, przy jakiej skali i charakterystyce danych wdrożenie takiego mechanizmu przynosi wymierne korzyści finansowe.
+
+\keywords Cloud Storage, Amazon S3, deduplikacja semantyczna, deduplikacja obrazów, embeddingi, SSCD, ocena jakości obrazu, Amazon DynamoDB, pgvector, FinOps
+%----------------------------------------
+% Streszczenie po angielsku dla \langpol
+% Polish abstract if \langeng is set
+%----------------------------------------
+\clearpage
+\secondabstract
+Cloud object storage services such as Amazon S3 offer almost unlimited scalability. In systems that receive large numbers of image files, e.g. e-commerce platforms, social media or photo archives, the Pay-As-You-Go billing model makes storing redundant data expensive. The same image is often uploaded many times in different resolutions, formats (e.g. PNG and heavily compressed JPEG) or with minor compression artifacts. The classic approach to verifying data identity, based on hash functions such as MD5 or SHA-256, is not sufficient in this case. Because of the avalanche effect, changing even a single byte of a file produces a completely different hash, so visually near-identical images are not recognised as duplicates and storage space is wasted.
+
+This thesis presents the design and implementation of an intelligent deduplication gateway that uses artificial intelligence models to perform semantic analysis of uploaded images. Instead of comparing raw bytes, the system converts each image into a high-dimensional vector (embedding) using the SSCD copy detection model and measures similarity between vectors with cosine similarity. When an image highly similar to an already stored one is detected, the mechanism compares the quality of both versions using no-reference metrics, including BRISQUE and the variance of the Laplacian as a sharpness measure. As a result, lower-quality duplicates are rejected and weaker versions of images can be replaced with better ones.
+
+The implemented hybrid architecture consists of a custom CLI tool written in Go, which mediates write operations, and a connected local Python microservice that runs the embedding model. The processing logic runs locally and is directly integrated with AWS cloud services. To improve performance, the process is divided into two stages. First, exact duplicates are detected using the Amazon DynamoDB key-value database, which allows repeated files to be rejected in $O(1)$ time. Second, new data undergoes the actual semantic analysis. Vector representations are stored in PostgreSQL with the pgvector extension, which enables efficient nearest-neighbour search, while deduplicated files are stored in standard Amazon S3 buckets. The research part of the thesis follows the FinOps methodology and aims to determine at what scale and for which data characteristics deploying such a mechanism brings measurable financial benefits.
+\secondkeywords Cloud Storage, Amazon S3, semantic deduplication, image deduplication, embeddings, SSCD, image quality assessment, Amazon DynamoDB, pgvector, FinOps
+
+\pagestyle{plain}
+
+%--------------
+% Spis treści
+%--------------
+\cleardoublepage % Zaczynamy od nieparzystej strony
+\tableofcontents
+
+%------------
+% Rozdziały
+%------------
+\cleardoublepage % Zaczynamy od nieparzystej strony
+\pagestyle{headings}
+
+\input{tex/1-wstep}         % Wygodnie jest trzymać każdy rozdział w osobnym pliku.
+\input{tex/2-tech-stack-overview}    % Umożliwia to również łatwą migrację do nowej wersji szablonu:
+\input{tex/3-architecture}
+\input{tex/4-ai-module}
+\input{tex/5-experiments-finops}
+
+ % Można też pisać rozdziały w jednym pliku.
+\clearpage % Zawsze zaczynamy rozdział od nowej strony
+\section{Summatio}
+\lipsum[4-10]
+
+%---------------
+% Bibliografia
+%---------------
+\cleardoublepage % Zaczynamy od nieparzystej strony
+\printbibliography
+\clearpage
+
+% Wykaz symboli i skrótów.
+% Pamiętaj, żeby posortować symbole alfabetycznie
+% we własnym zakresie. Makro \acronymlist
+% generuje właściwy tytuł sekcji, w zależności od języka.
+% Makro \acronym dodaje skrót/symbol do listy,
+% zapewniając podstawowe formatowanie.
+\acronymlist
+\acronym{EiTI}{Wydział Elektroniki i Technik Informacyjnych}
+\acronym{PW}{Politechnika Warszawska}
+\acronym{WEIRD}{ang. \emph{Western, Educated, Industrialized, Rich and Democratic}}
+\vspace{0.8cm}
+
+%--------------------------------------
+% Spisy: rysunków, tabel, załączników
+%--------------------------------------
+\pagestyle{plain}
+
+\listoffigurestoc    % Spis rysunków.
+\vspace{1cm}         % vertical space
+\listoftablestoc     % Spis tabel.
+\vspace{1cm}         % vertical space
+\listofappendicestoc % Spis załączników
+
+%-------------
+% Załączniki
+%-------------
+
+% Obrazki i tabele w załącznikach nie trafiają do spisów
+\captionsetup[figure]{list=no}
+\captionsetup[table]{list=no}
+
+% Załącznik 1
+\clearpage
+\appendix{Nazwa załącznika 1}
+\lipsum[1-3]
+\begin{figure}[!h]
+	\centering \includegraphics[width=0.5\linewidth]{logopw2.png}
+	\caption{Obrazek w załączniku.}
+\end{figure}
+\lipsum[4-7]
+
+% Załącznik 2
+\clearpage
+\appendix{Nazwa załącznika 2}
+\lipsum[1-2]
+\begin{table}[!h] \centering
+    \caption{Tabela w załączniku.}
+    \begin{tabular} {| c | c | r |} \hline
+        Kolumna 1       & Kolumna 2 & Liczba \\ \hline\hline
+        cell1           & cell2     & 60     \\ \hline
+        \multicolumn{2}{|r|}{Suma:} & 123,45 \\ \hline
+    \end{tabular}
+\end{table}
+\lipsum[3-4]
+
+% Używając powyższych spisów jako szablonu,
+% możesz dodać również swój własny wykaz,
+% np. spis algorytmów.
+
+\end{document} % Dobranoc.

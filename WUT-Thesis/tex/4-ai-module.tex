@@ -1,0 +1,939 @@
+\clearpage % Rozdziały zaczynamy od nowej strony.
+\section{Moduł sztucznej inteligencji i analiza semantyczna obrazów}
+
+Rozdział opisuje warstwę AI Workera, która rozpoznaje duplikaty
+percepcyjne. Są to pliki o innej zawartości bajtowej, ale o tej samej
+treści wizualnej, np. ponownie skompresowane, przeskalowane lub
+przycięte kopie. Funkcje skrótu kryptograficznego nie wykrywają takich
+par, ponieważ zmiana kodowania obrazu daje inny skrót
+pliku~\cite{pizzi2022sscd}.
+
+Moduł składa się z trzech części: ekstrakcji wektora cech modelem SSCD,
+wyszukiwania najbliższego sąsiada w PostgreSQL z rozszerzeniem
+\texttt{pgvector} oraz bezreferencyjnej oceny jakości. Podstawy
+teoretyczne, czyli GeM, funkcję straty InfoNCE, regularyzację KoLeo
+i miarę kosinusową, przedstawiono w rozdziale~2. Transport gRPC,
+buforowanie strumienia i mapowanie statusów w bramie opisano
+w podrozdziale~\ref{subsec:similarity-grpc-pipeline}. Poniżej
+uwzględniono tylko elementy potrzebne do zrozumienia decyzji
+podejmowanej przez AI Workera.
+
+W całym rozdziale fakty o implementacji pochodzą z kodu repozytorium
+\texttt{s3-dedup-engine}. Wnioski, które nie zostały zmierzone,
+oznaczono jako przypuszczenia.
+
+% ------------------------------------------------------------------
+\subsection{Ekstrakcja cech i model SSCD (Self-Supervised Descriptor)}
+\label{sec:model-sscd}
+
+\subsubsection{Wykrywanie kopii a klasyfikacja obrazów}
+
+Zadanie wykrywania kopii różni się od klasyfikacji. Autorzy SSCD
+przyjmują, że dwa obrazy są kopiami wtedy i tylko wtedy, gdy pochodzą
+z tego samego dwuwymiarowego źródła~\cite{pizzi2022sscd}.
+Dwa różne zdjęcia tego samego psa nie są więc kopiami, mimo że należą
+do tej samej klasy. Wektor odpowiedni dla klasyfikacji powinien
+zbliżać obrazy jednej klasy. Wektor do wykrywania kopii powinien
+natomiast utrzymywać w oddaleniu nawet obrazy semantycznie podobne,
+a całą przestrzeń wypełniać możliwie równomiernie~\cite{pizzi2022sscd}.
+
+Z tego powodu sieci wytrenowane z nadzorem na zbiorze
+ImageNet~\cite{deng2009imagenet} nie są dobrym wyborem do tego zadania.
+Uczą się one niezmienniczości względem cech, które nie zmieniają klasy
+obiektu. W deduplikacji ta sama niezmienniczość prowadziłaby do
+łączenia różnych zdjęć o podobnej treści. Tabela~\ref{tab:sscd-uap}
+zestawia wyniki z pracy SSCD na zbiorze DISC2021.
+Miara \(\mu\mathrm{AP}\) jest polem pod krzywą precyzja--czułość
+wyznaczoną dla wszystkich par zwróconych przez system, łącznie
+dla wszystkich zapytań~\cite{douze2021disc}. Odpowiada to stosowaniu
+jednego, wspólnego progu odległości dla całego
+zbioru~\cite{pizzi2022sscd}, czyli warunkom pracy bramy.
+
+\begin{table}[!htbp]
+\centering
+\caption{Skuteczność wybranych deskryptorów w wykrywaniu kopii na
+zbiorze DISC2021. \(\mu\mathrm{AP}_{SN}\) oznacza wynik po normalizacji
+podobieństwa zbiorem tła. Opracowanie własne na podstawie
+\cite{pizzi2022sscd}.}
+\label{tab:sscd-uap}
+\begin{tabular}{|l|r|r|r|}
+\hline
+\textbf{Model} & \textbf{Wymiar} & \(\boldsymbol{\mu\mathrm{AP}}\) [\%]
+& \(\boldsymbol{\mu\mathrm{AP}_{SN}}\) [\%] \\
+\hline
+Multigrain (ImageNet, nadzorowany) & 1500 & 16,5 & 36,5 \\
+Multigrain (ImageNet, nadzorowany) & 2048 & 20,5 & 41,7 \\
+DINO ViT-B/16 & 1500 & 32,2 & 53,8 \\
+SimCLR, wyjście sieci bazowej & 2048 & 13,1 & 33,9 \\
+SimCLR, warstwa rzutująca & 128 & 9,4 & 17,3 \\
+SSCD (DISC, adv.+mixup) & 512 & 61,5 & 72,5 \\
+\hline
+\end{tabular}
+\end{table}
+
+Model SSCD osiąga wyższy wynik od pozostałych deskryptorów przy
+mniejszym wymiarze wektora niż modele Multigrain. Autorzy podają, że
+SSCD przewyższa SimCLR o 48 punktów procentowych
+\(\mu\mathrm{AP}\)~\cite{pizzi2022sscd}. Mniejszy wymiar ma znaczenie
+praktyczne: zmniejsza rozmiar wiersza w bazie wektorowej i koszt
+porównania pary wektorów.
+
+\subsubsection{Budowa modelu}
+
+SSCD wykorzystuje sieć ResNet-50~\cite{he2016resnet} jako sieć bazową.
+Mapa cech z ostatniego bloku jest agregowana operacją GeM z
+parametrem \(p=3\)~\cite{radenovic2018gem,pizzi2022sscd}. Następnie
+stosowana jest warstwa liniowa rzutująca wektor do 512 wymiarów
+i normalizacja L2. W przeciwieństwie do SimCLR~\cite{chen2020simclr}
+warstwa rzutująca nie jest odrzucana po treningu, tylko pozostaje
+częścią potoku wnioskowania~\cite{pizzi2022sscd}. Pełna ścieżka
+wnioskowania ma więc postać:
+
+\begin{equation}
+\label{eq:sscd-forward}
+\mathbf{e}(I)=
+\frac{W\,\mathrm{GeM}_{p=3}\!\left(F(I)\right)}
+{\left\|W\,\mathrm{GeM}_{p=3}\!\left(F(I)\right)\right\|_2},
+\qquad \mathbf{e}(I)\in\mathbb{R}^{512},
+\end{equation}
+
+gdzie \(F\) oznacza sieć bazową ResNet-50, a \(W\) macierz warstwy
+rzutującej. GeM uśrednia każdy kanał po wszystkich położeniach
+przestrzennych, więc długość wektora nie zależy od wysokości i
+szerokości mapy cech~\cite{radenovic2018gem}. Pozwala to podawać
+na wejście obrazy o różnych proporcjach boków bez kadrowania.
+
+Model był trenowany metodą samonadzorowaną, bez etykiet klas.
+Pary pozytywne powstają jako dwie losowe transformacje tego samego
+obrazu~\cite{chen2020simclr,pizzi2022sscd}. W wariancie
+\texttt{sscd\_disc\_mixup} zestaw rozszerzony
+(ang. \textit{advanced augmentations}) uzupełniono o mieszanie
+obrazów metodami mixup i cutmix, stosowanymi z prawdopodobieństwem
+po 2,5\%~\cite{pizzi2022sscd}. Wklejenie fragmentu jednego obrazu
+w drugi modeluje kopie częściowe, np. kolaże~\cite{pizzi2022sscd}.
+Zbiór DISC2021 zawiera właśnie takie przekształcenia: nakładki
+tekstu i emotikon, zmiany kolorów, rozmycie, kompresję JPEG,
+kadrowanie, obroty, odbicia oraz osadzanie obrazu w zrzucie ekranu
+aplikacji~\cite{douze2021disc}. Odpowiadają one modyfikacjom,
+którym podlegają obrazy przesyłane ponownie do magazynu obiektowego.
+
+\subsubsection{Implementacja w AI Workerze}
+
+Model ładowany jest z pliku TorchScript
+\texttt{sscd\_disc\_mixup.torchscript.pt}, pobieranego z repozytorium
+Hugging Face \texttt{m3/sscd-copy-detection}~\cite{hf_m3_sscd}.
+Repozytorium to nie jest publikowane przez autorów SSCD; jego opis
+odsyła do oficjalnego repozytorium Meta~\cite{hf_m3_sscd,sscd_repo},
+w którym udostępniono model o tej samej nazwie: ResNet-50,
+rozszerzenia adv.+mixup, wektor 512-wymiarowy~\cite{sscd_repo}.
+Funkcja \texttt{hf\_hub\_download} jest wywoływana bez parametru
+\texttt{revision}. Wersja pliku nie jest więc przypięta do konkretnej
+rewizji repozytorium. Dla powtarzalności wyników należałoby zapisać
+skrót pliku wag lub identyfikator rewizji.
+
+Model wczytywany jest funkcją \texttt{torch.jit.load} na procesor CPU
+i przełączany w tryb ewaluacji. Obiekt \texttt{SscdEmbedder} działa
+jako singleton procesu, a pierwsze załadowanie chroni blokada
+\texttt{threading.Lock}. Serwer wywołuje ładowanie przed przyjęciem
+pierwszego żądania, dzięki czemu czas pobrania wag nie wlicza się
+do obsługi pierwszego obrazu.
+
+Przetwarzanie wstępne odpowiada zaleceniom autorów modelu.
+Repozytorium SSCD zaleca skalowanie krótszego boku do 288 pikseli
+albo skalowanie do kwadratu \(320\times320\)~\cite{sscd_repo}.
+W pracy SSCD trening prowadzono w rozdzielczości \(224\times224\),
+a ocenę po przeskalowaniu krótszego boku do 288 pikseli z zachowaniem
+proporcji~\cite{pizzi2022sscd}. AI Worker stosuje pierwszy wariant.
+Dla obrazu o wymiarach \(w\times h\) docelowy rozmiar wynosi:
+
+\begin{equation}
+\label{eq:sscd-resize}
+s=\frac{288}{\min(w,h)},\qquad
+(w',h')=\bigl(\max(1,\operatorname{round}(s\,w)),\;
+\max(1,\operatorname{round}(s\,h))\bigr).
+\end{equation}
+
+Następnie każdy piksel kanału \(c\in\{R,G,B\}\) jest skalowany do
+przedziału \([0,1]\) i standaryzowany statystykami ImageNet:
+
+\begin{equation}
+\label{eq:sscd-normalize}
+\tilde{x}_c=\frac{x_c/255-\mu_c}{\sigma_c},\qquad
+\boldsymbol{\mu}=(0{,}485;\,0{,}456;\,0{,}406),\quad
+\boldsymbol{\sigma}=(0{,}229;\,0{,}224;\,0{,}225).
+\end{equation}
+
+Tabela~\ref{tab:sscd-preprocessing} zestawia kroki przetwarzania
+wraz z miejscem ich realizacji w kodzie.
+
+\begin{table}[!htbp]
+\centering
+\caption{Przetwarzanie obrazu przed wyznaczeniem wektora SSCD.
+Opracowanie własne na podstawie implementacji.}
+\label{tab:sscd-preprocessing}
+\begin{tabular}{|p{0.27\textwidth}|p{0.63\textwidth}|}
+\hline
+\textbf{Krok} & \textbf{Realizacja w AI Workerze} \\
+\hline
+Dekodowanie & Pillow, konwersja do RGB; obsługiwane są formaty
+rozpoznawane przez \texttt{Image.open}. \\
+\hline
+Skalowanie & Krótszy bok do 288 pikseli, interpolacja dwuliniowa,
+bez kadrowania; równanie~\eqref{eq:sscd-resize}. \\
+\hline
+Normalizacja & Podział przez 255 i standaryzacja średnią i odchyleniem
+ImageNet; równanie~\eqref{eq:sscd-normalize}. \\
+\hline
+Układ tensora & NCHW, partia o rozmiarze 1, typ \texttt{float32}. \\
+\hline
+Wnioskowanie & \texttt{torch.inference\_mode()}, CPU. \\
+\hline
+Kontrola wyjścia & Sprawdzenie liczby wymiarów (512) i ponowna
+normalizacja L2 z dolnym ograniczeniem normy \(10^{-12}\). \\
+\hline
+\end{tabular}
+\end{table}
+
+Według repozytorium SSCD modele zwracają już wektory znormalizowane
+w normie L2~\cite{sscd_repo}. Ponowna normalizacja w kodzie
+\(\mathbf{e}\leftarrow\mathbf{e}/\max(\|\mathbf{e}\|_2,10^{-12})\)
+nie zmienia więc poprawnego wyniku, a zabezpiecza przed zmianą pliku
+wag na wariant bez normalizacji. Dolne ograniczenie normy chroni
+przed dzieleniem przez zero.
+
+Implementacja nie stosuje normalizacji podobieństwa zbiorem tła
+opisanej w pracy SSCD. W tej metodzie od podobieństwa pary
+odejmuje się podobieństwo zapytania do \(n\)-tego sąsiada
+z oddzielnego zbioru obrazów niezwiązanych~\cite{pizzi2022sscd}:
+
+\begin{equation}
+\label{eq:sscd-score-norm}
+\hat{s}(q,r)=s(q,r)-\beta\,s(q,b_n).
+\end{equation}
+
+Według tabeli~\ref{tab:sscd-uap} normalizacja podnosi
+\(\mu\mathrm{AP}\) modelu SSCD z 61,5\% do 72,5\%. Jej wdrożenie
+wymagałoby jednak utrzymywania i przeszukiwania drugiego indeksu
+dla każdego obrazu. W bramie porównywana jest wyłącznie surowa
+odległość kosinusowa.
+
+% ------------------------------------------------------------------
+\subsection{Reprezentacja wektorowa i przeszukiwanie przestrzeni
+wielowymiarowej}
+\label{sec:reprezentacja-wektorowa}
+
+\subsubsection{Miara odległości}
+
+Każdy obraz reprezentowany jest wektorem jednostkowym
+\(\mathbf{e}\in\mathbb{R}^{512}\). Zależność między podobieństwem
+kosinusowym a odległością zwracaną przez operator \texttt{<=>}
+podano w równaniu~\eqref{eq:tech-cosine-distance}. Dla wektorów
+jednostkowych zachodzi ponadto:
+
+\begin{equation}
+\label{eq:cos-euclid}
+\|\mathbf{x}-\mathbf{y}\|_2^2
+=\|\mathbf{x}\|_2^2+\|\mathbf{y}\|_2^2-2\,\mathbf{x}\cdot\mathbf{y}
+=2-2\cos(\mathbf{x},\mathbf{y})
+=2\,d_{\cos}(\mathbf{x},\mathbf{y}).
+\end{equation}
+
+Odległość kosinusowa jest więc połową kwadratu odległości
+euklidesowej. Ranking sąsiadów według \(d_{\cos}\) jest taki sam jak
+ranking według odległości euklidesowej. Pozwala to sprawdzić
+spójność progów podawanych przez autorów modelu. Dla
+\texttt{sscd\_disc\_mixup} repozytorium podaje równoważne progi:
+podobieństwo kosinusowe powyżej 0,75, odległość euklidesowa poniżej
+0,7 albo jej kwadrat poniżej 0,5~\cite{sscd_repo}.
+Z równania~\eqref{eq:cos-euclid} wynika
+\(0{,}7^2/2\approx0{,}245\) oraz \(0{,}5/2=0{,}25\), czyli
+w przybliżeniu \(d_{\cos}<0{,}25\). Trzy postacie progu są zgodne.
+
+Z równania~\eqref{eq:cos-euclid} wynika też, że \(d_{\cos}\)
+nie jest metryką. Kwadrat odległości euklidesowej nie spełnia
+nierówności trójkąta. Z warunków
+\(d_{\cos}(\mathbf{a},\mathbf{b})\leq t\)
+i \(d_{\cos}(\mathbf{b},\mathbf{c})\leq t\) nie wynika
+\(d_{\cos}(\mathbf{a},\mathbf{c})\leq t\), a jedynie
+\(d_{\cos}(\mathbf{a},\mathbf{c})\leq 4t\). Relacja „jest
+duplikatem” zdefiniowana progiem nie jest zatem przechodnia.
+Ma to znaczenie przy podmianie reprezentanta grupy, opisanej
+w podrozdziale~\ref{sec:infogain-jakosc}.
+
+\subsubsection{Przechowywanie wektorów}
+
+AI Worker tworzy przy starcie rozszerzenie \texttt{vector}, tabelę
+\texttt{image\_embeddings} i indeks HNSW. Schemat tabeli przedstawiono
+w tabeli~\ref{tab:pg-schema}.
+
+\begin{table}[!htbp]
+\centering
+\caption{Schemat tabeli \texttt{image\_embeddings}.
+Opracowanie własne na podstawie implementacji.}
+\label{tab:pg-schema}
+\begin{tabular}{|l|l|p{0.45\textwidth}|}
+\hline
+\textbf{Kolumna} & \textbf{Typ} & \textbf{Znaczenie} \\
+\hline
+\texttt{id} & \texttt{BIGSERIAL}, klucz główny & Identyfikator wiersza,
+używany przy blokadzie i podmianie. \\
+\hline
+\texttt{image\_key} & \texttt{TEXT}, \texttt{UNIQUE} & Nazwa pliku
+reprezentanta grupy w magazynie. \\
+\hline
+\texttt{embedding} & \texttt{VECTOR(512)} & Wektor SSCD. \\
+\hline
+\texttt{quality\_score} & \texttt{DOUBLE PRECISION} & Wskaźnik jakości
+z podrozdziału~\ref{sec:infogain-jakosc}. \\
+\hline
+\texttt{created\_at} & \texttt{TIMESTAMPTZ} & Czas utworzenia wiersza,
+domyślnie \texttt{NOW()}. \\
+\hline
+\end{tabular}
+\end{table}
+
+Według dokumentacji \texttt{pgvector} wektor zajmuje
+\(4d+8\) bajtów~\cite{pgvector_docs}. Dla \(d=512\) daje to
+2056 bajtów na wektor, bez narzutu wiersza i indeksu.
+Wektor przekazywany jest do zapytania jako tekst z ośmioma miejscami
+po przecinku dla każdej składowej. Błąd zaokrąglenia składowej nie
+przekracza \(5\cdot10^{-9}\). Dla wektora jednostkowego
+\(\sum_i|x_i|\leq\sqrt{512}\), więc zmiana iloczynu skalarnego
+nie przekracza około \(1{,}1\cdot10^{-7}\). Jest to wartość
+pomijalna wobec progów decyzyjnych rzędu \(10^{-1}\).
+
+W tabeli przechowywany jest tylko jeden wektor na grupę duplikatów.
+Wektory obrazów odrzuconych jako duplikaty nie są zapisywane. Przy
+podmianie wiersz reprezentanta jest aktualizowany w miejscu: zmienia
+się nazwa, wektor i wskaźnik jakości. Liczba wierszy rośnie więc tylko przy statusie \texttt{inserted}
+z nową nazwą pliku, a nie zmienia się przy odrzuceniach i podmianach.
+
+\subsubsection{Indeks HNSW}
+
+Indeks utworzono metodą \texttt{hnsw} z klasą operatorów
+\texttt{vector\_\allowbreak cosine\_\allowbreak ops}, bez podawania
+parametrów. Obowiązują więc wartości domyślne \texttt{pgvector}:
+\(m=16\), \(\mathit{ef\_construction}=64\)
+i \(\mathit{hnsw.ef\_search}=40\)~\cite{pgvector_docs}.
+
+HNSW (ang. \textit{Hierarchical Navigable Small World}) buduje
+wielowarstwowy graf bliskości. Wyższe warstwy zawierają coraz mniej
+punktów i długie połączenia, a warstwa najniższa wszystkie punkty.
+Wyszukiwanie zaczyna się od warstwy najwyższej i schodzi zachłannie
+w dół, zawężając obszar poszukiwań~\cite{malkov2020hnsw}. Parametr
+\(m\) ogranicza liczbę połączeń wierzchołka, \(\mathit{ef\_construction}\)
+rozmiar listy kandydatów przy budowie grafu, a \(\mathit{ef\_search}\)
+rozmiar tej listy przy zapytaniu~\cite{malkov2020hnsw,pgvector_docs}.
+Według dokumentacji \texttt{pgvector} HNSW daje lepszy kompromis
+między szybkością a czułością niż IVFFlat, kosztem dłuższej budowy
+i większego zużycia pamięci~\cite{pgvector_docs}. Indeks można
+też utworzyć na pustej tabeli, co odpowiada sposobowi inicjalizacji
+schematu w AI Workerze.
+
+Wyszukiwanie najbliższego sąsiada ma postać:
+
+\begin{lstlisting}[basicstyle=\ttfamily\small,breaklines=true]
+SELECT id, image_key, quality_score,
+       embedding <=> %(vector)s::vector AS distance
+FROM image_embeddings
+ORDER BY distance
+LIMIT 1;
+\end{lstlisting}
+
+Zapytanie zawiera \texttt{ORDER BY} odległości rosnąco i
+\texttt{LIMIT}, czyli warunki, przy których planista może użyć indeksu
+HNSW~\cite{pgvector_docs}. Dla małej tabeli planista może wybrać
+skanowanie sekwencyjne; wynik jest wtedy dokładny. Przy użyciu indeksu
+wyszukiwanie jest przybliżone: dokumentacja zaznacza, że indeks
+zamienia część czułości na szybkość i może zwrócić inne wyniki niż
+skanowanie pełne~\cite{pgvector_docs}.
+
+Skutki przybliżenia dla decyzji można określić dokładnie. Niech
+\(\mathbf{v}^{*}\) będzie rzeczywistym najbliższym sąsiadem, a
+\(\mathbf{v}'\) sąsiadem zwróconym przez indeks. Odległość
+\(d'=d_{\cos}(\mathbf{e},\mathbf{v}')\) jest obliczana dokładnie
+dla zwróconego wiersza i spełnia \(d'\geq d^{*}\). Możliwe są dwa
+przypadki błędne:
+
+\begin{itemize}
+    \item \(d^{*}\leq t<d'\): obraz zostaje przyjęty jako nowy, mimo że
+    w bazie istnieje duplikat. Jest to błąd pominięcia.
+    \item \(d^{*}\leq d'\leq t\), \(\mathbf{v}'\neq\mathbf{v}^{*}\):
+    obraz porównywany jest z reprezentantem innej grupy, która również
+    mieści się w progu.
+\end{itemize}
+
+Przybliżenie nie może natomiast spowodować uznania za duplikat
+obrazu, którego zwrócony sąsiad leży dalej niż próg, ponieważ warunek
+progowy sprawdzany jest na dokładnie obliczonej odległości.
+Liczba zwracanych wierszy wynosi jeden, więc filtrowanie po stronie
+zapytania i iteracyjne skanowanie indeksu, dostępne od wersji 0.8.0
+\texttt{pgvector}~\cite{pgvector_docs}, nie mają tu zastosowania.
+
+% ------------------------------------------------------------------
+\subsection{Obiektywna ocena jakości obrazu (InfoGain) i logika
+decyzyjna}
+\label{sec:infogain-jakosc}
+
+\subsubsection{Problem wyboru lepszej wersji}
+
+Po znalezieniu sąsiada w progu odległości trzeba zdecydować, która
+wersja pozostanie w magazynie. Nie można przyjąć, że plik przesłany
+wcześniej jest oryginałem. Kolejna wersja może mieć wyższą
+rozdzielczość albo mniejszą kompresję. Wskaźnik jakości musi przy tym
+działać bez obrazu wzorcowego. Miary pełnoreferencyjne, takie jak
+SSIM, porównują obraz z wersją uznaną za
+niezniekształconą~\cite{wang2004ssim}. W deduplikacji żadna z wersji
+nie jest takim wzorcem, a o jego wyborze ma dopiero rozstrzygnąć
+porównanie.
+
+Potrzebna jest więc miara bezreferencyjna. W literaturze stosuje się
+do tego m.in. modele statystyk scen naturalnych, takie jak BRISQUE,
+uczone na ocenach jakości wystawionych przez
+ludzi~\cite{mittal2012brisque}. W projekcie wybrano prostszy
+wskaźnik heurystyczny złożony z trzech cech, które można policzyć
+bez dodatkowego modelu. Nazwa \textit{InfoGain} pochodzi z opisu
+modułu \texttt{quality/score.py}, który określa wynik jako zysk
+informacyjny deduplikacji. Nie jest to miara teorioinformacyjna,
+lecz ważona suma cech obrazu.
+
+\subsubsection{Definicja wskaźnika}
+
+Obraz dekodowany jest raz. Najpierw odczytywane są wymiary
+oryginalne \(w\times h\). Następnie tworzony jest obraz w skali
+szarości, przeskalowany tak, aby dłuższy bok miał 512 pikseli.
+Dla plików JPEG i MPO wywoływana jest metoda \texttt{Image.draft},
+która konfiguruje dekoder tak, aby od razu zwrócił obraz możliwie
+bliski żądanemu trybowi i rozmiarowi~\cite{pillow_image}. Ogranicza
+to koszt dekodowania dużych zdjęć. Dokumentacja podaje, że metoda jest obsługiwana tylko dla tych
+dwóch formatów~\cite{pillow_image}. Końcowe skalowanie do 512 pikseli
+wykonywane jest interpolacją dwuliniową, także w górę dla obrazów
+mniejszych.
+
+Na tej podstawie liczone są trzy składniki. Każdy jest normalizowany
+funkcją:
+
+\begin{equation}
+\label{eq:clamped-ratio}
+\rho(v,r)=
+\begin{cases}
+0, & r\leq0,\\
+\min\!\left(\max\!\left(\dfrac{v}{r},0\right),1\right), & r>0.
+\end{cases}
+\end{equation}
+
+\paragraph{Rozdzielczość.}
+Składnik ten porównuje liczbę pikseli oryginału, sprzed
+zmniejszenia, z liczbą pikseli obrazu UHD:
+
+\begin{equation}
+\label{eq:q-resolution}
+q_{\mathrm{res}}=\rho\!\left(w\,h,\;3840\cdot2160\right).
+\end{equation}
+
+Obrazy o liczbie pikseli równej lub większej od
+\(8\,294\,400\) otrzymują wartość 1. Powyżej tej granicy
+rozdzielczość nie różnicuje już wersji.
+
+\paragraph{Ostrość.}
+Ostrość mierzona jest wariancją laplasjanu obrazu w skali szarości
+\(G\) o dłuższym boku 512 pikseli:
+
+\begin{equation}
+\label{eq:q-sharpness}
+q_{\mathrm{sharp}}=\rho\!\left(\operatorname{Var}\!\left(\nabla^2 G\right),\;600\right).
+\end{equation}
+
+OpenCV wyznacza laplasjan jako sumę drugich pochodnych
+cząstkowych. Przy domyślnym rozmiarze jądra stosowana jest maska
+\(\begin{bmatrix}0&1&0\\1&-4&1\\0&1&0\end{bmatrix}\)~\cite{opencv_laplacian}.
+Wariancję laplasjanu zaproponowano jako miarę ostrości do
+automatycznego ustawiania ostrości mikroskopu~\cite{pechpacheco2000}.
+W porównaniu operatorów miary ostrości operatory oparte na
+laplasjanie dały najlepsze wyniki w typowych warunkach, ale były
+najbardziej wrażliwe na szum~\cite{pertuz2013focus}. Obraz
+zaszumiony może więc uzyskać zawyżoną ocenę ostrości. Rozmycie
+obniża wariancję, ponieważ tłumi szybkie zmiany jasności.
+
+Pomiar odbywa się na obrazie o stałym rozmiarze, więc ostrość jest
+porównywalna między plikami o różnej rozdzielczości. Obraz mały,
+powiększony do 512 pikseli przez interpolację, nie zyskuje nowych
+szczegółów. Można się spodziewać, że jego wariancja laplasjanu będzie
+niższa niż dla tej samej sceny zmniejszonej z wysokiej rozdzielczości.
+Składnik ostrości jest wtedy częściowo skorelowany z rozdzielczością.
+Tego przypuszczenia nie zweryfikowano pomiarowo.
+
+\paragraph{Kontrast.}
+Kontrast mierzony jest odchyleniem standardowym jasności pikseli
+obrazu \(G\), zapisanych jako liczby całkowite z przedziału
+\([0,255]\):
+
+\begin{equation}
+\label{eq:q-contrast}
+q_{\mathrm{con}}=\rho\!\left(\sigma(G),\;80\right).
+\end{equation}
+
+Jest to globalny kontrast RMS. Peli wskazuje, że pojedyncza wartość
+dla całego obrazu nie oddaje kontrastu postrzeganego lokalnie
+w obrazach złożonych~\cite{peli1990contrast}. W tym zastosowaniu
+składnik ma ograniczoną rolę: odróżnia wersje wyblakłe od wersji
+o pełnym zakresie tonalnym.
+
+\paragraph{Wynik łączny.}
+Wskaźnik jest ważoną sumą składników:
+
+\begin{equation}
+\label{eq:quality-total}
+Q=0{,}5\,q_{\mathrm{res}}+0{,}3\,q_{\mathrm{sharp}}+0{,}2\,q_{\mathrm{con}},
+\qquad Q\in[0,1].
+\end{equation}
+
+Tabela~\ref{tab:quality-factors} zestawia parametry wskaźnika.
+
+\begin{table}[!htbp]
+\centering
+\caption{Składniki wskaźnika jakości.
+Opracowanie własne na podstawie implementacji.}
+\label{tab:quality-factors}
+\begin{tabular}{|l|p{0.33\textwidth}|r|r|}
+\hline
+\textbf{Składnik} & \textbf{Wielkość mierzona} &
+\textbf{Odniesienie} & \textbf{Waga} \\
+\hline
+\(q_{\mathrm{res}}\) & liczba pikseli oryginału &
+\(3840\cdot2160\) & 0,5 \\
+\hline
+\(q_{\mathrm{sharp}}\) & wariancja laplasjanu na obrazie 512 px &
+600 & 0,3 \\
+\hline
+\(q_{\mathrm{con}}\) & odchylenie standardowe jasności &
+80 & 0,2 \\
+\hline
+\end{tabular}
+\end{table}
+
+Wagi i wartości odniesienia są stałymi projektowymi w pliku
+\texttt{const/quality.py}. W repozytorium nie ma procedury, która
+dopasowywałaby je do ocen ludzi lub do zbioru testowego. Testy
+jednostkowe w \texttt{tests/test\_quality\_score.py} sprawdzają
+własności wskaźnika, a nie jego zgodność z percepcją:
+
+\begin{itemize}
+    \item wagi sumują się do jedności, a waga rozdzielczości jest
+    największa;
+    \item wynik maleje monotonicznie dla tej samej sceny w kolejności
+    UHD, HD, SD i miniatura;
+    \item przy tej samej rozdzielczości obraz ostrzejszy otrzymuje
+    wyższy wynik niż rozmyty;
+    \item każdy składnik leży w przedziale \([0,1]\), a wynik jest
+    deterministyczny.
+\end{itemize}
+
+Wskaźnik nie zawiera osobnej miary artefaktów kompresji, np.
+blokowości JPEG. Artefakty wpływają na wynik tylko pośrednio, przez
+zmianę wariancji laplasjanu i rozkładu jasności. Krawędzie bloków
+\(8\times8\) dodają składowe o wysokiej częstotliwości, więc mogą
+nawet podnieść ocenę ostrości. Jest to wniosek z definicji
+operatora, niezmierzony w projekcie.
+
+\subsubsection{Przykład działania wag}
+
+Waga rozdzielczości decyduje o tym, kiedy mniejsza wersja może wygrać
+z większą. Nowy obraz \(n\) zastępuje istniejący obraz \(o\), gdy
+\(Q_n>Q_o\). Po podstawieniu równania~\eqref{eq:quality-total}:
+
+\begin{equation}
+\label{eq:quality-tradeoff}
+0{,}3\,\Delta q_{\mathrm{sharp}}+0{,}2\,\Delta q_{\mathrm{con}}
+>0{,}5\,\left(q^{o}_{\mathrm{res}}-q^{n}_{\mathrm{res}}\right),
+\end{equation}
+
+gdzie \(\Delta q=q^{n}-q^{o}\). Przykładowo zdjęcie
+\(4000\times3000\) ma \(q_{\mathrm{res}}=1\), a jego kopia
+\(1280\times960\) ma \(q_{\mathrm{res}}\approx0{,}148\). Prawa strona
+nierówności wynosi wtedy około 0,426. Lewa strona nie przekracza
+0,5, więc mniejsza kopia wygra tylko wtedy, gdy będzie znacznie
+ostrzejsza i bardziej kontrastowa od dużego, np. silnie rozmytego
+oryginału. Dla dwóch obrazów co najmniej w rozdzielczości UHD prawa
+strona wynosi zero i o wyniku decydują wyłącznie ostrość i kontrast.
+
+\subsubsection{Logika decyzyjna}
+
+Kolejność operacji w AI Workerze jest stała. Po odebraniu całego
+strumienia obliczany jest wskaźnik \(Q\), następnie wektor
+\(\mathbf{e}\), a na końcu wywoływana jest metoda
+\texttt{Embedding\allowbreak Repository.\allowbreak resolve}.
+Czasy etapów trafiają do dziennika w polach
+\texttt{score\_ms}, \texttt{embed\_ms} i \texttt{resolve\_ms}. Decyzję można zapisać jako:
+
+\begin{equation}
+\label{eq:ai-decision}
+\mathrm{status}=
+\begin{cases}
+\texttt{inserted}, & \text{brak sąsiada lub } d'>t,\\
+\texttt{duplicate\_rejected}, & d'\leq t \;\wedge\; Q_n\leq Q_o,\\
+\texttt{replaced}, & d'\leq t \;\wedge\; Q_n> Q_o,
+\end{cases}
+\end{equation}
+
+gdzie \(t\) jest progiem przekazanym w polu \texttt{threshold},
+domyślnie \(0{,}60\). Przy pustej tabeli zwracana jest odległość
+umowna 1,0. Remis wskaźnika jakości prowadzi do odrzucenia nowego
+obrazu, więc przy równych ocenach zachowywana jest wersja wcześniejsza.
+Przebieg metody przedstawiono na rysunku~\ref{fig:ai-resolve-algo}.
+
+\begin{figure}[!htbp]
+\centering
+\begin{lstlisting}[basicstyle=\ttfamily\small,breaklines=true]
+BEGIN
+  pg_advisory_xact_lock(74821001)
+  nb = nearest(e)                    -- ORDER BY <=> LIMIT 1
+  if nb is None or nb.distance > t:
+      INSERT ... ON CONFLICT (image_key) DO UPDATE
+      return inserted
+  q_old = SELECT quality_score ... WHERE id = nb.id FOR UPDATE
+  if q_new <= q_old:
+      return duplicate_rejected(nb.image_key)
+  UPDATE image_embeddings
+     SET image_key, embedding, quality_score
+   WHERE id = nb.id
+  return replaced(nb.image_key)
+COMMIT
+\end{lstlisting}
+\caption{Rozstrzygnięcie decyzji w \texttt{EmbeddingRepository.resolve}.
+Opracowanie własne na podstawie implementacji.}
+\label{fig:ai-resolve-algo}
+\end{figure}
+
+Cała metoda działa w jednej transakcji. Transakcyjna blokada doradcza
+o stałym identyfikatorze szereguje rozstrzygnięcia wszystkich obrazów,
+a \texttt{SELECT ... FOR UPDATE} blokuje wiersz reprezentanta do
+końca transakcji~\cite{postgres16_locking}. Zakres tych gwarancji
+i brak wspólnej transakcji z zapisami S3 i DynamoDB omówiono
+w podrozdziale~\ref{subsec:wspolbieznosc}. Ocena jakości i wyznaczenie
+wektora odbywają się przed pobraniem blokady, więc mogą przebiegać
+równolegle w czterech wątkach serwera gRPC. Szeregowane jest tylko
+wyszukanie i zapis.
+
+Status przekazywany jest do bramy. W pliku \texttt{decision.go}
+zdefiniowano trzy decyzje potoku: \texttt{continue},
+\texttt{accept\_full} i \texttt{soft\_dedup}.
+W pliku \texttt{similarity.go} funkcja
+\texttt{apply\allowbreak Semantic\allowbreak Status} mapuje na nie statusy AI Workera zgodnie
+z tabelą~\ref{tab:ai-status-mapping}.
+
+\begin{table}[!htbp]
+\centering
+\caption{Mapowanie statusów AI Workera na działania bramy.
+Opracowanie własne na podstawie implementacji.}
+\label{tab:ai-status-mapping}
+\begin{tabular}{|p{0.25\textwidth}|p{0.25\textwidth}|p{0.38\textwidth}|}
+\hline
+\textbf{Status} & \textbf{Decyzja bramy} & \textbf{Skutek w magazynie} \\
+\hline
+\texttt{inserted} & \texttt{accept\_full} & Zapis obrazu, JSON
+i wpisów DynamoDB. \\
+\hline
+\texttt{duplicate\_\allowbreak rejected} & \texttt{soft\_dedup} & Pominięcie
+zapisu obrazu; zapisywany jest JSON ze wskazaniem
+\texttt{existing\_image\_key}. \\
+\hline
+\texttt{replaced} & \texttt{accept\_full} oraz flaga \texttt{Replace\allowbreak Existing}
+& Zapis nowego obrazu, a następnie usunięcie poprzedniego obiektu,
+jego JSON i wpisów DynamoDB. \\
+\hline
+\end{tabular}
+\end{table}
+
+Odrzucenie (\texttt{duplicate\_rejected}) i podmiana
+(\texttt{replaced}) dają różne skutki kosztowe. Odrzucenie zmniejsza
+liczbę zapisów do S3. Podmiana zwiększa liczbę operacji: obejmuje
+zapis nowego obrazu, odczyt rozmiaru poprzedniego obiektu i jego
+usunięcie. Względem stanu sprzed operacji objętość danych zmienia się
+o różnicę rozmiarów obu plików i przy wersji lepszej jakości może
+wzrosnąć. Względem systemu bez deduplikacji oszczędzany jest rozmiar
+usuniętego obiektu. Bilans tych operacji przedstawiono
+w rozdziale~\ref{chap:ewaluacja-i-finops}.
+
+\subsubsection{Konsekwencje przyjętego modelu grupy}
+
+Grupa duplikatów reprezentowana jest jednym wektorem. Po podmianie
+wiersz otrzymuje wektor nowego obrazu, a wektor poprzedniego jest
+tracony. Kolejne obrazy porównywane są więc z nowym reprezentantem.
+Ponieważ relacja progowa nie jest przechodnia, obraz bliski dawnemu
+reprezentantowi może leżeć poza progiem od nowego i zostać przyjęty
+jako odrębny. Ten sam zbiór plików może zatem dać inny wynik
+deduplikacji przy innej kolejności przesyłania.
+
+Decyzja uwzględnia tylko jednego sąsiada. Jeżeli w progu mieści się
+kilka reprezentantów, porównanie jakości odbywa się wyłącznie
+z najbliższym z nich. Pozostałe grupy nie są łączone.
+
+Operacja \texttt{INSERT ... ON CONFLICT (image\_key) DO UPDATE}
+nadpisuje wiersz, gdy obraz o tej samej nazwie nie ma sąsiada
+w progu. Ponowne przesłanie innego obrazu pod tą samą nazwą zastępuje
+więc wektor i wskaźnik jakości poprzedniego pliku bez porównania
+jakości.
+
+% ------------------------------------------------------------------
+\subsection{Ewaluacja i strojenie progów podobieństwa (Threshold Tuning)}
+\label{sec:ewaluacja-progów}
+
+\subsubsection{Miary oceny progu}
+
+Próg \(t\) dzieli pary obrazów na uznane i nieuznane za duplikaty.
+Niech \(P\) będzie zbiorem par rzeczywiście zduplikowanych, a \(N\)
+zbiorem par różnych. Dla progu \(t\) definiuje się odsetek wykrytych
+duplikatów i odsetek fałszywych alarmów~\cite{fawcett2006roc}:
+
+\begin{equation}
+\label{eq:tpr-fpr}
+\mathrm{TPR}(t)=\frac{\left|\{(a,b)\in P: d_{\cos}(a,b)\leq t\}\right|}{|P|},
+\qquad
+\mathrm{FPR}(t)=\frac{\left|\{(a,b)\in N: d_{\cos}(a,b)\leq t\}\right|}{|N|}.
+\end{equation}
+
+Przebieg obu wielkości przy zmianie \(t\) tworzy krzywą
+ROC~\cite{fawcett2006roc}. W deduplikacji koszty błędów są
+niesymetryczne. Fałszywy alarm prowadzi do pominięcia zapisu albo
+usunięcia innego obrazu, czyli do utraty danych. Pominięcie duplikatu
+powoduje jedynie dodatkowy koszt przechowywania. Próg powinien więc
+w pierwszej kolejności ograniczać FPR.
+
+W repozytorium przygotowano dwa notatniki: \texttt{tune\_threshold.ipynb}
+do analizy rozkładu odległości par oraz \texttt{eval\_meta.ipynb}
+do oceny całego potoku na zbiorze DISC2021. Skrypt
+\texttt{scripts/fetch\_dataset.py}, przewidziany do pobierania danych,
+jest pusty. Zbiory trzeba więc przygotować ręcznie.
+
+\subsubsection{Rozkład odległości na zbiorze bliskich duplikatów}
+
+Notatnik \texttt{tune\_threshold.ipynb} korzysta ze zbioru
+\textit{Near Duplicate Dataset} z serwisu Kaggle. Zbiór zawiera zdjęcia
+produktów sklepowych wykonane pod nieco innym kątem lub
+w innym czasie; jest udostępniony na licencji CC BY-NC
+4.0~\cite{kaggle_crystal0801}. Opis zbioru podaje 455 plików JPG;
+notatnik wczytał 456 plików w 64 grupach obiektów, rozpoznawanych
+po nazwie \texttt{\{grupa\} (\{nr\}).jpg}. Wzorzec nazw w notatniku dopuszcza także
+przyrostek \texttt{clone}. Przyczyny różnicy jednego pliku
+nie sprawdzono.
+
+Procedura notatnika jest następująca:
+
+\begin{enumerate}
+    \item Utworzenie wszystkich par w obrębie grupy (2113 par
+    duplikatów) i między grupami (101\,627 par różnych).
+    \item Losowanie po 200 par z każdego zbioru (ziarno 7).
+    \item Wyznaczenie wektorów obiektem zwracanym przez
+    \texttt{get\_embedder()} z modułu AI Workera, czyli tym samym
+    modelem i przetwarzaniem wstępnym; łącznie dla 377 różnych zdjęć z wylosowanych par.
+    \item Obliczenie odległości funkcją \texttt{cosine} z modułu
+    \texttt{scipy.\allowbreak spatial.\allowbreak distance}. Funkcja zwraca
+    \(1-\cos(\mathbf{x},\mathbf{y})\)~\cite{scipy_cosine}, czyli tę samą
+    wielkość co operator \texttt{<=>}~\cite{pgvector_docs}.
+\end{enumerate}
+
+Wyniki przedstawiono w tabeli~\ref{tab:tune-threshold}.
+
+\begin{table}[!htbp]
+\centering
+\caption{Rozkład odległości kosinusowej SSCD dla losowych par ze zbioru
+\textit{Near Duplicate Dataset} (po 200 par).
+Opracowanie własne na podstawie wyników notatnika
+\texttt{tune\_threshold.ipynb}.}
+\label{tab:tune-threshold}
+\begin{tabular}{|l|r|r|r|r|}
+\hline
+\textbf{Rodzaj pary} & \textbf{Średnia} & \textbf{Mediana} &
+\textbf{Percentyl 90} & \(\boldsymbol{d_{\cos}\leq0{,}10}\) \\
+\hline
+Ta sama grupa obiektu & 0,3455 & 0,3355 & 0,4832 & 1,5\% \\
+Różne grupy & 0,8850 & 0,8939 & 0,9867 & 0\% \\
+\hline
+\end{tabular}
+\end{table}
+
+Przykładowe pary z jednej grupy miały odległości 0,2221, 0,3885
+i 0,4438, a pary z różnych grup 0,7353 i 0,7714. Histogram
+rozkładów nie został zapisany w notatniku.
+
+Wyniki należy interpretować w świetle definicji kopii przyjętej
+w SSCD. Zdjęcia w tym zbiorze przedstawiają ten sam obiekt, ale są
+odrębnymi ujęciami, a nie kopiami jednego pliku. Według definicji
+z pracy SSCD nie są to więc kopie~\cite{pizzi2022sscd}. Model nie był
+trenowany do ich zbliżania. Wyjaśnia to, dlaczego mediana odległości
+w grupie (0,3355) przekracza próg około 0,25 podany przez autorów
+modelu dla precyzji 90\% na DISC2021~\cite{sscd_repo}. Przy tamtym
+progu co najmniej połowa par z tabeli~\ref{tab:tune-threshold} nie
+zostałaby uznana za duplikaty.
+
+Z tabeli można wyprowadzić tylko część wniosków o progu domyślnym
+\(t=0{,}60\). Percentyl 90 odległości par z jednej grupy wynosi
+0,4832, więc co najmniej 90\% wylosowanych par spełnia
+\(d_{\cos}\leq0{,}60\), czyli \(\mathrm{TPR}(0{,}60)\geq0{,}9\)
+na tej próbie. Notatnik nie podaje natomiast odsetka par różnych
+poniżej 0,60. Mediana 0,8939 ogranicza go jedynie od góry przez 50\%,
+co nie wystarcza do oceny FPR. Odległości nie są zapisywane do pliku, więc brakującą wielkość
+trzeba obliczyć po ponownym uruchomieniu notatnika.
+
+Dla progu 0,10 notatnik wykazał 0 z 200 par różnych. Zero
+w próbie nie oznacza zerowego ryzyka. Według reguły trzech górna
+granica 95-procentowego przedziału ufności dla odsetka zdarzeń przy
+zerze obserwacji w \(n\) próbach wynosi około
+\(3/n\)~\cite{hanley1983rule}. Dla \(n=200\) daje to 1,5\%. Przy tym
+samym progu wykryto jednak tylko 3 z 200 par duplikatów (1,5\%).
+
+W opisie notatnika wspomniano stałą \texttt{MAX\_COSINE\_DISTANCE = 0.10}
+w pliku \texttt{const/pg.py}. W bieżącym kodzie taka stała nie
+istnieje. Próg przekazywany jest z bramy w polu \texttt{threshold}
+i domyślnie wynosi 0,60 (\texttt{DefaultCosineThreshold}
+w \texttt{internal/constants/const.go}). Opis notatnika jest więc
+niezgodny z implementacją i dotyczy wcześniejszej wersji systemu.
+Wartości 0,60 nie wyznaczono procedurą optymalizacji opisaną
+w repozytorium. Jest to wartość domyślna, którą należy potwierdzić
+pomiarem FPR na danych docelowych.
+
+\subsubsection{Ocena potoku na zbiorze DISC2021}
+
+Notatnik \texttt{eval\_meta.ipynb} ocenia cały system, a nie tylko
+rozkład odległości. Wykorzystuje zbiór DISC2021, przygotowany przez
+Meta do konkursu Image Similarity Challenge 2021~\cite{douze2021disc,
+papakipos2022isc}. Zbiór zawiera milion obrazów referencyjnych bez
+przekształceń oraz po 50\,000 zapytań w zbiorach rozwojowym
+i testowym. W każdym z nich 10\,000 zapytań to przekształcone kopie
+obrazów referencyjnych, a 40\,000 to obrazy rozpraszające bez
+odpowiednika w zbiorze referencyjnym~\cite{douze2021disc}. Dla zbioru
+rozwojowego udostępniono przyporządkowania dla 25\,000
+zapytań~\cite{douze2021disc}.
+
+Notatnik korzysta z jednego archiwum obrazów referencyjnych
+(\texttt{refs\_50k\_0}), jednego archiwum zapytań rozwojowych
+(\texttt{dev\_queries\_50k\_0}) oraz pliku
+\texttt{dev\_queries\_groundtruth.csv}. Parametry przebiegu podano
+w tabeli~\ref{tab:eval-meta-params}.
+
+\begin{table}[!htbp]
+\centering
+\caption{Parametry notatnika \texttt{eval\_meta.ipynb}.
+Opracowanie własne na podstawie implementacji.}
+\label{tab:eval-meta-params}
+\begin{tabular}{|l|r|p{0.5\textwidth}|}
+\hline
+\textbf{Parametr} & \textbf{Wartość} & \textbf{Znaczenie} \\
+\hline
+\texttt{THRESHOLD} & 0,60 & Próg przekazywany bramie
+(\texttt{-{}-threshold}). \\
+\hline
+\texttt{WORKERS} & 10 & Liczba równoległych zadań bramy
+(\texttt{-{}-workers}). \\
+\hline
+\texttt{LIMIT} & 200 & Liczba obrazów referencyjnych i liczba zapytań. \\
+\hline
+\texttt{DUP\_FRACTION} & 0,20 & Udział dokładnych kopii obrazów
+referencyjnych (40 plików). \\
+\hline
+\texttt{BATCH\_SIZE} & 40 & Liczba plików w jednym uruchomieniu bramy. \\
+\hline
+\texttt{SEED} & 7 & Ziarno losowania i mieszania. \\
+\hline
+\end{tabular}
+\end{table}
+
+Procedura obejmuje następujące kroki:
+
+\begin{enumerate}
+    \item Wylosowanie 200 obrazów referencyjnych i 200 zapytań,
+    dla których istnieje przyporządkowanie w pliku odpowiedzi.
+    \item Utworzenie 40 dokładnych kopii pierwszych obrazów
+    referencyjnych z przyrostkiem \texttt{\_dup} w nazwie.
+    \item Wymieszanie całej listy 440 plików i podział na partie
+    po 40 plików.
+    \item Rozpakowanie partii i uruchomienie bramy poleceniem
+    \texttt{go run ./cmd/gateway}. Przekazywana jest lista plików
+    (\texttt{-{}-list}), próg 0,60 (\texttt{-{}-threshold})
+    i liczba zadań 10 (\texttt{-{}-workers}).
+    \item Odczyt zdarzeń z pliku \texttt{events.jsonl}.
+    Każdy plik otrzymuje grupę (\texttt{ref}, \texttt{exact\_dup}
+    lub \texttt{augmented}) oraz wynik bramy.
+\end{enumerate}
+
+Wynik bramy zapisany w polu \texttt{outcome} przyjmuje wartości
+\texttt{inserted}, \texttt{hash\_\allowbreak duplicate},
+\texttt{semantic\_\allowbreak duplicate},
+\texttt{replaced} i \texttt{failed}. Dla grup \texttt{exact\_dup}
+i \texttt{augmented} notatnik porównuje nazwę wskazaną w polu
+\texttt{existing\_image\_key} z oczekiwanym obrazem referencyjnym.
+Etykiety oceny opisano w tabeli~\ref{tab:eval-meta-labels}.
+
+\begin{table}[!htbp]
+\centering
+\caption{Etykiety oceny w notatniku \texttt{eval\_meta.ipynb}.
+Opracowanie własne na podstawie implementacji.}
+\label{tab:eval-meta-labels}
+\begin{tabular}{|l|p{0.62\textwidth}|}
+\hline
+\textbf{Etykieta} & \textbf{Warunek} \\
+\hline
+\texttt{correct\_dedup} & Duplikat binarny lub semantyczny wskazujący
+oczekiwany obraz. \\
+\hline
+\texttt{wrong\_dedup} & Duplikat binarny lub semantyczny wskazujący
+inny obraz. \\
+\hline
+\texttt{correct\_substitute} & Podmiana oczekiwanego obrazu. \\
+\hline
+\texttt{wrong\_substitute} & Podmiana innego obrazu. \\
+\hline
+\texttt{miss} & Obraz przyjęty jako nowy (\texttt{inserted}). \\
+\hline
+\texttt{failed} & Błąd przetwarzania. \\
+\hline
+\end{tabular}
+\end{table}
+
+Notatnik rysuje mapy cieplne liczności wyników w grupach i etykiet
+oraz rozkład odległości dla każdej etykiety. Zbiorcze metryki
+zapisuje do pliku \texttt{metrics.yaml}. W repozytorium notatnik
+nie zawiera zapisanych wyników, dlatego w tym podrozdziale opisano
+wyłącznie metodę.
+
+\subsubsection{Ograniczenia procedury}
+
+Analiza kodu notatników wskazuje warunki, które należy uwzględnić
+przy interpretacji wyników:
+
+\begin{itemize}
+    \item \textbf{Brak zapytań rozpraszających.} Wybierane są tylko
+    zapytania z przyporządkowaniem. Procedura nie mierzy więc
+    fałszywych alarmów dla obrazów bez odpowiednika, które według
+    autorów DISC2021 obniżają \(\mu\mathrm{AP}\)~\cite{douze2021disc}.
+    \item \textbf{Obecność obrazu referencyjnego.} Zapytania i obrazy
+    referencyjne losowane są niezależnie. Kod nie sprawdza, czy obraz
+    oczekiwany dla zapytania znalazł się wśród 200 przesłanych obrazów
+    referencyjnych. Gdy go brak, przyjęcie zapytania jako nowego jest
+    poprawne, a mimo to otrzymuje etykietę \texttt{miss}. Przed
+    obliczeniem czułości należy ograniczyć zapytania do tych, których
+    obraz referencyjny jest w próbie.
+    \item \textbf{Duplikaty binarne.} Brama ustawia
+    \texttt{existing\_image\_key} tylko w potoku podobieństwa.
+    Zdarzenie \texttt{hash\_duplicate} nie wskazuje więc istniejącego
+    obrazu, a notatnik porównuje pustą nazwę z oczekiwaną i przypisuje
+    etykietę \texttt{wrong\_dedup}. Poprawnie wykryte kopie dokładne
+    są w tej grupie liczone jako błędy.
+    \item \textbf{Kolejność przetwarzania.} Lista jest mieszana,
+    a w partii działa 10 równoległych zadań. Kopia może zostać
+    przetworzona przed oryginałem. Wtedy kopia otrzymuje wynik
+    \texttt{inserted}, a oryginał staje się duplikatem. Etykiety
+    przypisywane są jednak tylko kopiom, więc taki przypadek liczony
+    jest jako \texttt{miss}.
+    \item \textbf{Liczność próby.} Przy 200 zapytaniach brak błędów
+    danego rodzaju ogranicza ich odsetek z góry tylko do około
+    1,5\%~\cite{hanley1983rule}.
+\end{itemize}
+
+Strojenie progu wymaga więc dwóch pomiarów: rozkładu odległości par
+z oznaczeniem \(P\) i \(N\) na danych zbliżonych do docelowych oraz
+oceny całego potoku z uwzględnieniem obrazów rozpraszających.
+Pierwszy pomiar wskazuje zakres progu z równania~\eqref{eq:tpr-fpr},
+drugi sprawdza wpływ przybliżonego wyszukiwania, kolejności przesyłania
+i podmiany reprezentanta na wynik końcowy.

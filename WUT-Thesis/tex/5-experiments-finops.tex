@@ -1,0 +1,45 @@
+\clearpage % Rozdziały zaczynamy od nowej strony.
+\section{Ewaluacja, strojenie progów i analiza efektywności (FinOps)}
+\label{chap:ewaluacja-i-finops}
+
+% W niniejszym rozdziale przedstawiono wyniki eksperymentów badawczych przeprowadzonych na systemie \texttt{s3-dedup-engine}. Skupiono się na procesie optymalizacji i strojenia progów decyzyjnych modelu percepcji, analizie wydajności potoku przetwarzania oraz kwantyfikacji oszczędności finansowych w oparciu o model FinOps.
+
+% -------------------------------------------------------------------------
+\subsection{Metodologia eksperymentu i przygotowanie danych}
+\label{sec:metodologia-eksperymentu}
+
+% TODO: Opisać zbiory danych wykorzystane do testów (np. pobrane za pomocą scripts/fetch_dataset.py) oraz strukturę eksperymentu badawczego.
+% \begin{itemize}
+%     \item Charakterystyka testowego zbioru danych graficznych (zróżnicowanie pod kątem rozdzielczości, stopnia kompresji JPEG oraz transformacji geometrycznych).
+%     \item Kryteria podziału na zbiory referencyjne i zapytania testowe (\textit{query vs. database}).
+% \end{itemize}
+
+% -------------------------------------------------------------------------
+\subsection{Strojenie progów podobieństwa (Threshold Tuning)}
+\label{sec:threshold-tuning}
+
+% TODO: Opisać wyniki eksperymentów ze strojenia progu cosinusowego w oparciu o notatnik scripts/tune_threshold.ipynb.
+% \begin{itemize}
+%     \item Analiza wpływów wartości granicznych miary podobieństwa cosinusowego (\textit{Cosine Similarity}) na skuteczność detekcji duplikatów.
+%     \item Krzywe precyzji i pełności (\textit{Precision-Recall}) oraz dobór optymalnego progu operacyjnego minimalizującego liczbę fałszywych alarmów (\textit{False Positives}) przy jednoczesnym zachowaniu wysokiej wykrywalności kopii.
+% \end{itemize}
+
+% -------------------------------------------------------------------------
+\subsection{Wydajność potoku deduplikacyjnego (Pipeline Performance)}
+\label{sec:wydajonsc-potoku}
+
+% TODO: Przedstawić wyniki pomiarów narzutu czasowego (latency) i obciążenia zasobów.
+% \begin{itemize}
+%     \item Analiza skuteczności strategii wczesnego wyjścia (\textit{Early Exit}): jaki odsetek plików jest eliminowany na etapie wstępnym (nazwa, pierwszy chunk, pełne SHA-256) bez konieczności angażowania modelu AI.
+%     \item Porównanie czasu operacji I/O w systemie hybrydowym (Go + Python via gRPC) względem tradycyjnego, pełnego przetwarzania sekwencyjnego.
+% \end{itemize}
+
+% -------------------------------------------------------------------------
+\subsection{Analiza finansowa i optymalizacja kosztów chmurowych (FinOps)}
+\label{sec:analiza-finops}
+
+% TODO: Opisać symulację oszczędności kosztowych w ekosystemie Amazon S3.
+% \begin{itemize}
+%     \item Kwantyfikacja redukcji zajętości przestrzeni dyskowej dzięki eliminacji duplikatów binarnych (1:1) oraz percepcyjnych (\textit{upgrade} jakościowy poprzez \textit{InfoGain}).
+%     \item Symulacja oszczędności na operacjach API (wywołania typu \texttt{PUT}, \textit{GET}, \textit{LIST}) oraz transferze danych wychodzących w oparciu o cennik Amazon S3.
+% \end{itemize}

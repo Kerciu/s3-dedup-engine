@@ -1,0 +1,227 @@
+\clearpage % Rozdziały zaczynamy od nowej strony.
+\section{Analiza dziedziny i przegląd technologii}
+
+
+Przed rozpoczęciem pracy należy wprowadzić koncepcje i technologie wykorzystane do budowy inteligentnej bramy deduplikacyjnej. Opisano czym właściwie jest chmura publiczna Amazon Web Services, specyfikę obiektowych magazynów danych oraz baz dokumentowych na podstawie usług Amazon S3 oraz Amazon DynamoDB. Skonfrontowano także tradycyjne, oparte na funkcjach skrótu metody weryfikacji powielonych danych z podejściem semantycznym, które bazuje na wektorowych modelach wizyjnych.
+% =========== Czym wogole jest AWS ====================
+
+\subsection{Platforma Amazon Web Services}
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.12\linewidth]{Amazon_Web_Services_Logo.png}
+    \caption{Logo Amazon Web Services. Źródło: Wikimedia Commons \cite{commons_wikimedia_aws}.}
+    \label{fig:aws-icon}
+\end{figure}
+
+Amazon Web Services (AWS) stanowi zbiór usług chmurowych udostępnianych przez firmę Amazon, obejmujący ponad dwieście produktów przeznaczonych do przechowywania, przetwarzania oraz analizy danych \cite{aws_overview}. Zasoby przydzielane są na żądanie, a opłaty naliczane według rzeczywistego zużycia -- bez obowiązku wcześniejszej rezerwacji infrastruktury \cite{aws_pricing}. Platforma działa w ramach regionów geograficznych. Każdy z nich obejmuje co najmniej dwie odseparowane strefy dostępności, połączone siecią o niskich opóźnieniach \cite{aws_global_infrastructure}.
+
+W opracowywanej bramie deduplikacyjnej wykorzystano trzy usługi tej platformy. Amazon S3 służy jako magazyn obiektowy dla plików graficznych wraz z metadanymi. Amazon DynamoDB pełni funkcję indeksu dokładnych duplikatów, przeszukiwanego za pomocą operacji \texttt{Query} i \texttt{GetItem}~\cite{aws_query_api,awsGetItem}. Komponent obliczeniowy pracuje lokalnie, lecz współpracuje z usługami AWS za pośrednictwem oficjalnych SDK \cite{aws_sdk_docs} -- dzięki temu całe rozwiązanie można przenieść do chmury bez modyfikacji logiki biznesowej.
+
+Rozliczenia w AWS opierają się na modelu Pay-As-You-Go: koszt usługi zależy od zajętej przestrzeni dyskowej, liczby wykonanych operacji API oraz objętości transferu danych \cite{aws_pricing, aws_pricing_how_it_works}. Zależność ta stanowi bezpośrednią motywację dla deduplikacji -- odrzucenie każdej kopii obrazu eliminuje koszt przechowywania i zapisu jej danych binarnych, nie wyklucza jednak osobnego zapisu metadanych.
+
+% =========== Amazon Simple Storage Service ===========
+
+
+\subsection{Przechowywanie danych w chmurze -- Amazon S3}
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.12\linewidth]{Arch_Amazon-Simple-Storage-Service_64@5x.png}
+    \caption{Ikona usługi Amazon S3. Źródło: AWS Architecture Icons \cite{aws_architecture_icons}.}
+    \label{fig:aws-s3-icon}
+\end{figure}
+
+Amazon Simple Storage Service (S3) to usługa typu \textit{Object Storage}, przeznaczona do przechowywania dużych zbiorów danych w postaci binarnej (BLOB) \cite{aws_s3_service, aws_s3_welcome_doc}. W odróżnieniu od tradycyjnych systemów plików o strukturze drzewiastej, magazyny obiektowe przechowują dane w płaskiej przestrzeni, a widoczne w interfejsie użytkownika foldery są jedynie logicznym grupowaniem. Takie podejście ułatwia rozpraszanie danych w chmurze, zapewniając wysoką dostępność i łatwość skalowania.
+
+
+\subsubsection{Architektura danych: Zasobniki i Obiekty}
+
+
+Struktura S3 opiera się na dwóch podstawowych pojęciach \cite{aws_s3_service, aws_s3_welcome_doc}:
+\begin{itemize}
+    \item \textbf{Zasobniki (ang. \textit{Buckets})} -- Kontenery najwyższego poziomu. Domyślnie nazwa każdego zasobnika musi być unikalna w skali globalnej (od 2026 roku można też tworzyć zasobniki we własnej, regionalnej przestrzeni nazw konta \cite{aws_s3_namespaces}), choć fizycznie przypisuje się go do konkretnego regionu AWS (np. \texttt{us-east-1} znajdujący się w Północnej Wirginii w USA). Na poziomie zasobnika konfiguruje się m.in. polityki dostępu IAM oraz reguły retencji danych.
+    \item \textbf{Obiekty (ang. \textit{Objects})} -- Właściwe pliki przechowywane w zasobnikach. Na obiekt składają się dane binarne (do 50 TB na pojedynczy plik \cite{aws_s3_50tb}), metadane oraz unikalny klucz (ang. \textit{Key}), który pełni rolę identyfikatora w ramach zasobnika.
+\end{itemize}
+
+
+\subsubsection{Zarządzanie metadanymi}
+
+
+Metadane w S3, zapisywane jako pary klucz-wartość, dostarczają dodatkowych informacji o obiektach i dzielą się na dwie grupy \cite{aws_s3_service, aws_s3_welcome_doc}:
+\begin{itemize}
+    \item \textbf{Systemowe} -- Generowane przez AWS (np. rozmiar pliku, data modyfikacji, znacznik \textit{ETag}). W przypadku obiektów przesłanych pojedynczym żądaniem \texttt{PUT}, bez szyfrowania kluczem SSE-KMS lub SSE-C, \textit{ETag} jest skrótem MD5 zawartości pliku \cite{aws_s3_integrity}.
+    \item \textbf{Użytkownika} -- Niestandardowe parametry nadawane przez aplikację podczas tworzenia obiektu, przesyłane w nagłówkach HTTP z prefiksem \texttt{x-amz-meta-}.
+\end{itemize}
+
+
+W bramie deduplikacyjnej opis pliku przechowywany jest jako osobny obiekt JSON. Otrzymuje on klucz \texttt{metadata/\allowbreak<file\_name>.json}, a dane obrazu zapisywane są niezależnie pod \texttt{payloads/\allowbreak<file\_name>}. Opis JSON należy odróżnić od metadanych użytkownika w nagłówkach \texttt{x-amz-meta-}, które są atrybutami dołączonymi do obiektu S3~\cite{aws_s3_object_metadata}. JSON przesyłany jest jako treść obiektu metodą \texttt{PutObject}, która zapisuje dane pod wskazanym kluczem w zasobniku~\cite{aws_s3_put_object}. Aktualizacja tego opisu nie wymaga kopiowania obrazu na niego samego. Kolejność zapisu metadanych i obrazu przedstawiono w podrozdziale~\ref{subsec:similarity-grpc-pipeline}.
+
+
+\subsubsection{Model rozliczeniowy i optymalizacja kosztów (FinOps)}
+
+
+Użycie usług takich jak S3 wiąże się z modelem płatności \textit{Pay-As-You-Go}, w którym koszty zależą od faktycznego zużycia zasobów. Składają się na nie trzy główne elementy \cite{aws_s3_service, aws_s3_welcome_doc}:
+\begin{enumerate}
+    \item \textbf{Wolumen danych} -- Miesięczna opłata za fizycznie zajętą przestrzeń.
+    \item \textbf{Transfer (Data Egress)} -- Koszt przesyłania danych poza infrastrukturę AWS.
+    \item \textbf{Operacje API} -- Opłaty za żądania sieciowe, przy czym operacje modyfikujące stan (\texttt{PUT}, \texttt{COPY}, \texttt{POST}) są znacznie droższe niż operacje odczytu (\texttt{GET}).
+\end{enumerate}
+
+
+Wdrożenie inteligentnej bramy deduplikacyjnej ma na celu redukcję tych wskaźników. Odrzucanie powielonych obrazów ogranicza zapis danych binarnych w S3, nie eliminuje jednak wszystkich operacji zapisu. Po decyzji deduplikacji nadal zapisywany jest osobny obiekt JSON z metadanymi; służy do tego \texttt{PutObject}, czyli operacja dodania obiektu do zasobnika~\cite{aws_s3_put_object}. W analizie kosztów należy więc uwzględnić zarówno pominięty zapis obrazu, jak i zapis JSON-a.
+
+
+% =========== Amazon DynamoDB ===========
+
+\subsection{Amazon DynamoDB jako szybki indeks duplikatów}
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.12\linewidth]{Arch_Amazon-DynamoDB_64@5x.png}
+    \caption{Ikona usługi Amazon DynamoDB. Źródło: AWS Architecture Icons \cite{aws_architecture_icons}.}
+    \label{fig:aws-dynamodb-icon}
+\end{figure}
+
+Amazon DynamoDB to zarządzana, rozproszona baza danych NoSQL typu klucz-wartość, zapewniająca stałą, niską latencję dostępu przy dużych wolumenach zapisu i odczytu \cite{aws_dynamodb_docs, aws_dynamodb_keyvalue}. Rekord identyfikowany jest przez klucz główny (ang. \textit{primary key}), składający się z klucza partycji (ang. \textit{partition key}) albo pary: klucz partycji i klucz sortowania (ang. \textit{sort key}). Przy kluczu złożonym dopiero ta para jednoznacznie identyfikuje rekord~\cite{aws_dynamodb_components}.
+
+W projektowanej bramie deduplikacyjnej DynamoDB pełni funkcję indeksu dokładnych duplikatów. Do wstępnego wyszukiwania wykorzystywany jest skrót SHA-256 pierwszego fragmentu wyznaczonego przez CDC, a nie skróty wszystkich fragmentów pliku. Zastosowana biblioteka \texttt{restic/chunker} wyznacza granice na podstawie kroczącego odcisku Rabina~\cite{restic2026chunker}. Skróty \(c\) i \(h\), oznaczające odpowiednio skrót początkowego fragmentu i całego pliku, tworzą rekord \texttt{PK = CHUNK\#<c>}, \texttt{SK = FULL\#<h>}. Osobny rekord \texttt{PK = FILE\#<file\_name>}, \texttt{SK = META} przechowuje metadane potrzebne do zapisu i podmiany obiektu; nie stanowi dodatkowego etapu detekcji duplikatu.
+
+Wyszukiwanie rozpoczyna się od \texttt{Query} dla klucza partycji \texttt{CHUNK\#<c>} z parametrem \texttt{Limit = 1}. Operacja ta pozwala odczytać elementy o wskazanej wartości klucza partycji~\cite{aws_query_api}. Dopiero po trafieniu obliczany jest pełny skrót \(h\) i wykonywane \texttt{GetItem} dla pary \texttt{CHUNK\#<c>}/\texttt{FULL\#<h>}; odczyt pojedynczego elementu wymaga wówczas obu składowych klucza~\cite{awsGetItem}. Jeżeli pierwszy odczyt nie zwróci kandydata, pełny skrót jest pomijany na etapie wyszukiwania, ale zostaje uzupełniony przed zapisem zaakceptowanego obrazu. Szczegóły przedstawiono w podrozdziałach~\ref{subsubsec:potok-cdc} i~\ref{subsubsec:potok-full-hash}.
+
+Dzięki temu dokładne duplikaty są odrzucane przed uruchomieniem modelu wektorowego, co ogranicza liczbę wywołań modelu, opóźnienie odpowiedzi oraz koszty obliczeniowe systemu.
+
+
+% =========== Classing Dedup using MD5 & SHA256 ===========
+
+
+\subsection{Klasyczna deduplikacja oparta na funkcjach skrótu}
+
+
+W tradycyjnych systemach redundancję danych eliminuje się z użyciem kryptograficznych funkcji skrótu (ang. \textit{hashing algorithms}). Funkcja taka przetwarza strumień wejściowy, generując sygnaturę o stałej długości, która w praktyce służy jako unikalny identyfikator pliku. Zakłada się przy tym, że prawdopodobieństwo kolizji (wygenerowania tego samego skrótu dla dwóch różnych plików) jest pomijalnie małe.
+
+
+Weryfikacja polega na wyliczeniu skrótu $H_{new}$ dla nowego pliku $F_{new}$ i wyszukaniu go w indeksie systemu. Odczyt rekordu po kluczu należy odróżnić od kosztu obliczenia skrótu: \texttt{GetItem} odczytuje wskazany element~\cite{awsGetItem}, natomiast SHA-256 przetwarza bloki całego wejścia~\cite{shs2015}. Nie oznacza to stałego czasu całej detekcji względem rozmiaru pliku. W rozwiązaniach produkcyjnych najczęściej opiera się to o algorytmy MD5 lub funkcje z rodziny SHA-2.
+
+
+\subsubsection{Algorytm MD5 (\textit{Message-Digest Algorithm 5})}
+
+
+MD5 kompresuje dane wejściowe w 512-bitowych blokach, zwracając 128-bitowy wynik \cite{rfc1321}. Choć ze względu na podatność na kolizje algorytm wycofano z zastosowań ściśle kryptograficznych, jego niska złożoność obliczeniowa sprawia, że nadal bywa wykorzystywany do prostych zadań deduplikacyjnych.
+
+
+Proces kompresji składa się z 64 kroków (cztery rundy po 16 operacji), wykorzystujących nieliniowe funkcje logiczne. Operują one na 32-bitowych słowach $B, C, D$ według poniższych wzorów \cite{rfc1321}:
+\begin{align}
+    F(B, C, D) & = (B \wedge C) \vee (\neg B \wedge D) \\
+    G(B, C, D) & = (B \wedge D) \vee (C \wedge \neg D) \\
+    H(B, C, D) & = B \oplus C \oplus D \\
+    I(B, C, D) & = C \oplus (B \vee \neg D)
+\end{align}
+Symbole oznaczają standardowe operacje bitowe: koniunkcję ($\wedge$), alternatywę ($\vee$), alternatywę wykluczającą XOR ($\oplus$) oraz negację logiczną ($\neg$).
+
+
+\subsubsection{Algorytm SHA-256 (\textit{Secure Hash Algorithm 2})}
+
+
+Bezpieczniejszą alternatywą jest SHA-256, który po przetworzeniu 512-bitowych bloków generuje 256-bitowy wynik \cite{shs2015}. Dwukrotnie dłuższy skrót ($2^{256}$ możliwych wartości) sprawia, że ryzyko kolizji w systemach magazynowania danych jest w praktyce pomijalne.
+
+
+Algorytm wykorzystuje m.in. rotację w prawo ($ROTR$) i przesunięcie logiczne ($SHR$). Główne funkcje operujące na bitach to \cite{shs2015}:
+\begin{align}
+    Ch(E, F, G) & = (E \wedge F) \oplus (\neg E \wedge G) \\
+    Maj(A, B, C) & = (A \wedge B) \oplus (A \wedge C) \oplus (B \wedge C)
+\end{align}
+Funkcja $Ch$ (ang. \textit{choose}) wybiera bity z $F$ lub $G$ w zależności od wartości $E$, natomiast $Maj$ (ang. \textit{majority}) zwraca wartość $1$, gdy większość argumentów jest równa $1$. Proces uzupełniają sumy rotacyjne $\Sigma_0$ i $\Sigma_1$, które zwiększają rozpraszanie (dyfuzję) bitów danych wejściowych \cite{shs2015}:
+\begin{align}
+    \Sigma_0(A) & = ROTR^{2}(A) \oplus ROTR^{13}(A) \oplus ROTR^{22}(A) \\
+    \Sigma_1(E) & = ROTR^{6}(E) \oplus ROTR^{11}(E) \oplus ROTR^{25}(E)
+\end{align}
+
+
+\subsubsection{Porcjowanie zależne od treści (CDC)}
+\label{subsubsec:tech-cdc}
+
+Porcjowanie zależne od treści (ang. \textit{Content-Defined Chunking}, CDC) wyznacza granice fragmentów na podstawie zawartości strumienia. W podziale na bloki stałej długości wstawienie danych może przesunąć granice kolejnych fragmentów; CDC ogranicza ten problem, wiążąc podział z lokalną treścią zamiast wyłącznie z pozycją bajtów~\cite{gregoriadis2024cdc}.
+
+Jednym z rozwiązań jest kroczący odcisk Rabina, aktualizowany podczas przesuwania okna po danych. Wynik służy do sprawdzania warunku granicy, natomiast identyfikator wydzielonego fragmentu można obliczyć osobną funkcją kryptograficzną~\cite{gregoriadis2024cdc}. Takie rozdzielenie zastosowano w projekcie: biblioteka \texttt{restic/chunker} realizuje CDC oparte na odcisku Rabina~\cite{restic2026chunker}, a identyfikatory wyznaczane są funkcją SHA-256~\cite{shs2015}. Wykorzystanie tylko pierwszego fragmentu do filtrowania kandydatów, parametry podziału i odczyt zastępczy opisano w podrozdziale~\ref{subsubsec:potok-cdc}.
+
+\subsubsection{Wnioski dla deduplikacji obrazów}
+
+
+Mimo że funkcje skrótu świetnie sprawdzają się przy wykrywaniu identycznych plików binarnych (\textit{bit-to-bit}), nie nadają się do deduplikacji obrazów, które przeszły nawet drobną obróbkę. Główną przeszkodą jest tzw. efekt lawinowy -- zmiana nawet jednego bajtu (np. ponowna kompresja JPEG, zmiana rozdzielczości, konwersja z PNG do JPEG czy usunięcie metadanych EXIF) skutkuje kaskadową modyfikacją bitów w wygenerowanym skrócie, dając zupełnie inny wynik. Dla człowieka oba pliki przedstawiają to samo zdjęcie, jednak na poziomie bajtów są to zupełnie różne dane.
+
+Częściowym rozwiązaniem są skróty percepcyjne (ang. \textit{perceptual hashing}, np. pHash), które wyliczają sygnaturę na podstawie zawartości wizualnej obrazu, a nie jego bajtów \cite{zauner2010}. Radzą sobie one ze zmianą rozdzielczości czy kompresją JPEG, jednak w badaniach Zaunera żaden z czterech porównanych skrótów nie był odporny na obrót obrazu o 5 stopni ani na jego odbicie lustrzane \cite{zauner2010}. Z tego powodu ani algorytmy takie jak SHA-256, ani proste skróty percepcyjne nie pozwalają niezawodnie powiązać ze sobą dwóch wersji tego samego obrazu, co wymusza zastosowanie mechanizmów analizy semantycznej.
+
+
+\subsection{Reprezentacja semantyczna i wektoryzacja obrazów (Embeddings)}
+
+
+Jak pokazano w poprzednim podrozdziale, klasyczne metody weryfikacji oparte na funkcjach skrótu są wrażliwe na najmniejsze zmiany w strukturze pliku. Z tego powodu w nowoczesnych systemach wizji komputerowej (ang. \textit{Computer Vision}) odchodzi się od porównywania obrazów piksel po pikselu na rzecz analizy semantycznej, która skupia się na tym, co obraz faktycznie przedstawia.
+
+
+\subsubsection{Konwolucyjne sieci neuronowe i przestrzeń wielowymiarowa}
+
+
+Podstawą większości współczesnych modeli wizyjnych są konwolucyjne sieci neuronowe (ang. \textit{Convolutional Neural Networks}, CNN), które przetwarzają obraz za pomocą niewielkich filtrów przesuwanych po jego powierzchni \cite{goodfellow2016}. Kolejne warstwy sieci wykrywają coraz bardziej złożone wzorce -- od krawędzi i tekstur w warstwach początkowych, aż po kształty i całe obiekty w warstwach głębszych \cite{goodfellow2016}.
+
+
+Wynikiem przetworzenia obrazu jest gęsty wektor (ang. \textit{dense vector}) -- tablica liczb rzeczywistych, która opisuje zawartość obrazu jako punkt w wielowymiarowej przestrzeni. Popularna architektura ResNet-50, wykorzystująca połączenia rezydualne do trenowania bardzo głębokich sieci \cite{he2016resnet}, zwraca na wyjściu ostatniej warstwy konwolucyjnej mapę cech o 2048 kanałach. W modelach przeznaczonych do wykrywania kopii obrazów, takich jak SSCD, cechy te są następnie rzutowane na przestrzeń 512-wymiarową \cite{pizzi2022sscd, sscd_repo}.
+
+
+Mapa cech ma jednak postać trójwymiarowego tensora, dlatego przed porównaniem musi zostać zagregowana do pojedynczego wektora. W najprostszym ujęciu jest to uśrednianie wartości każdego kanału (ang. \textit{Average Pooling}), jednak w zadaniach wyszukiwania obrazów lepsze wyniki daje uogólnione uśrednianie potęgowe (ang. \textit{Generalized Mean Pooling}, GeM) \cite{radenovic2018gem}:
+$$f_k = \left( \frac{1}{|\mathcal{X}_k|} \sum_{x \in \mathcal{X}_k} x^{p} \right)^{\frac{1}{p}}$$
+gdzie $\mathcal{X}_k$ to zbiór aktywacji $k$-tego kanału mapy cech, a $p$ to parametr potęgi. Dla $p = 1$ otrzymuje się zwykłe uśrednianie, natomiast dla $p \to \infty$ operacja sprowadza się do wyboru wartości maksymalnej (ang. \textit{Max Pooling}) \cite{radenovic2018gem}. Model SSCD wykorzystuje wartość $p = 3$ \cite{pizzi2022sscd}.
+
+
+\subsubsection{Matematyczny model uczenia samonadzorowanego (SimCLR i SSCD)}
+
+
+Proces generowania wektorów $\mathbf{z}$ wymaga uprzedniego zebrania rozległego zbioru treningowego, na przykład zbioru DISC21, który zawiera milion obrazów treningowych i milion obrazów referencyjnych~\cite{douze2021disc, pizzi2022sscd}. W odróżnieniu od klasycznej klasyfikacji obrazów, uczenie samonadzorowane (ang. \textit{self-supervised learning}) nie wymaga ręcznie przygotowanych etykiet -- sieć uczy się wyłącznie na podstawie samych obrazów~\cite{chen2020simclr}.
+
+
+W każdym kroku treningu algorytm (np. SimCLR) pobiera partię (ang. \textit{batch}) $N$ obrazów i dla każdego z nich tworzy dwie losowo zmodyfikowane wersje (ang. \textit{augmentations}), np. przycięte, rozmyte lub o zmienionych kolorach~\cite{chen2020simclr}. Daje to łącznie $2N$ wektorów, przy czym dwie wersje tego samego obrazu tworzą parę pozytywną, a wszystkie pozostałe obrazy w partii traktowane są jako przykłady negatywne~\cite{chen2020simclr}. W przypadku SSCD zestaw modyfikacji rozszerzono o przekształcenia typowe dla obrazów kopiowanych w sieci: kompresję JPEG, obrót, nałożenie tekstu lub emoji, a także mieszanie dwóch obrazów (techniki MixUp i CutMix)~\cite{pizzi2022sscd}.
+
+
+Dysponując wektorami, sieć oblicza ich wzajemne podobieństwo jako iloczyn skalarny wektorów znormalizowanych, skalowany parametrem temperatury $\tau$ (w SSCD $\tau = 0{,}05$)~\cite{chen2020simclr, pizzi2022sscd}. Funkcja straty InfoNCE dla pary pozytywnej $(i, j)$ przyjmuje postać~\cite{pizzi2022sscd}:
+$$\ell_{i,j} = -\log \frac{\exp(\mathbf{z}_i \cdot \mathbf{z}_j / \tau)}{\sum_{k \neq i} \exp(\mathbf{z}_i \cdot \mathbf{z}_k / \tau)}$$
+
+
+W procesie optymalizacji wykorzystującym spadek gradientu (ang. \textit{Stochastic Gradient Descent}), algorytm aktualizuje wagi sieci~\cite{chen2020simclr}. Celem jest zbliżenie do siebie wektorów dwóch wersji tego samego obrazu poprzez maksymalizację ich iloczynu skalarnego, przy jednoczesnym oddaleniu od siebie przykładów negatywnych. SSCD uzupełnia tę funkcję straty o regularyzację entropii KoLeo~\cite{sablayrolles2019spreading, pizzi2022sscd}, która rozkłada wektory różnych obrazów możliwie równomiernie w przestrzeni:
+$$\mathcal{L}_{KoLeo} = -\frac{1}{N} \sum_{i=1}^{N} \log \left( \min_{j \notin \hat{P}_i} \|\mathbf{z}_i - \mathbf{z}_j\| \right)$$
+gdzie $\hat{P}_i$ oznacza zbiór wersji tego samego obrazu co $\mathbf{z}_i$. Wartość $\mathcal{L}_{InfoNCE}$ jest średnią z $\ell_{i,j}$ po wszystkich parach pozytywnych, a ostateczna funkcja straty ma postać $\mathcal{L} = \mathcal{L}_{InfoNCE} + \lambda \mathcal{L}_{KoLeo}$, gdzie w standardowej konfiguracji $\lambda = 30$~\cite{pizzi2022sscd}. Dzięki temu model lepiej odróżnia rzeczywiste kopie od obrazów, które są do siebie jedynie podobne tematycznie. W odróżnieniu od SimCLR, w którym warstwa rzutująca jest po treningu odrzucana~\cite{chen2020simclr}, SSCD zachowuje ją i wykorzystuje także podczas wyliczania wektorów dla nowych obrazów~\cite{pizzi2022sscd}.
+
+
+\subsubsection{Porównywanie obrazów i miara cosinusowa}
+
+
+Modele takie jak SSCD przekształcają każdy obraz w pojedynczy wektor o stałej liczbie wymiarów, niezależnie od jego rozdzielczości czy formatu. Przed wyliczeniem wektora obraz jest skalowany do ustalonego rozmiaru (np. krótszy bok do 288 pikseli) i normalizowany \cite{sscd_repo}. Dzięki temu pliki takie jak oryginalne zdjęcie produktu zapisane w formacie PNG oraz jego pomniejszona, silnie skompresowana kopia w formacie JPEG dają wektory o tej samej liczbie wymiarów, które można bezpośrednio ze sobą porównać. Ponieważ model był trenowany tak, aby kopie tego samego obrazu leżały blisko siebie w przestrzeni wektorowej \cite{pizzi2022sscd}, wektory obu plików będą do siebie zbliżone.
+
+
+W celu formalnej weryfikacji stopnia podobieństwa między dwoma wektorami $\mathbf{x}$ oraz $\mathbf{y}$, reprezentującymi odpowiednio nowo przesłany obraz oraz obraz referencyjny z bazy danych, standardowo stosuje się miarę cosinusa kąta zawartego między nimi\cite{jm3}. Oblicza się ją poprzez podzielenie iloczynu skalarnego wektorów przez iloczyn ich długości (znormalizowany iloczyn skalarny)\cite{jm3}:
+$$cosine(\mathbf{x},\mathbf{y}) = \frac{\mathbf{x} \cdot \mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|} = \frac{\sum_{i=1}^{d} x_i y_i}{\sqrt{\sum_{i=1}^{d} x_i^2} \sqrt{\sum_{i=1}^{d} y_i^2}}$$
+Dzięki normalizacji różnice w fizycznej długości wektorów są ignorowane, a wynikiem jest wyłącznie ocena ich kierunku\cite{jm3}. Ponieważ wartości gęstych wektorów mogą być ujemne, miara ta przyjmuje wartości w przedziale od $1$ (wektory o zgodnym kierunku), przez $0$ (wektory ortogonalne, oznaczające brak powiązania), aż do $-1$ (wektory o przeciwnych kierunkach)\cite{jm3}.
+
+
+Z perspektywy wydajności obliczeniowej istotnym mechanizmem jest pre-normalizacja, podczas której tworzone są wektory jednostkowe o długości równej 1\cite{jm3}. Model SSCD fabrycznie zwraca wektory znormalizowane w przestrzeni L2 \cite{sscd_repo}. Oznacza to, że mianownik w powyższym wzorze przyjmuje wartość równą jeden. Dla wektorów jednostkowych iloczyn skalarny staje się matematycznie tożsamy z miarą cosinusową\cite{jm3}. Pozwala to na uproszczenie obliczeń do pojedynczej operacji iloczynu skalarnego ($\mathbf{x} \cdot \mathbf{y}$), co przekłada się bezpośrednio na redukcję czasu odpowiedzi bramy deduplikacyjnej. Według autorów modelu \texttt{sscd\_disc\_mixup} pary obrazów DISC, których podobieństwo cosinusowe przekracza $0{,}75$, są kopiami z precyzją 90\% \cite{sscd_repo}. Wartość ta stanowi punkt wyjścia do doboru progu decyzyjnego w projektowanej bramie, jednak ostateczny próg należy wyznaczyć eksperymentalnie dla danych, na których system będzie pracował.
+
+Podobieństwo i odległość kosinusowa opisują różne wielkości. W rozszerzeniu \texttt{pgvector} operator \texttt{<=>} zwraca odległość. Z podobieństwem wiąże ją zależność~\cite{pgvector_docs}:
+\begin{equation}
+\label{eq:tech-cosine-distance}
+d_{\cos}(\mathbf{x},\mathbf{y})
+=1-\operatorname{cosine}(\mathbf{x},\mathbf{y}).
+\end{equation}
+Większe podobieństwo odpowiada mniejszej odległości; przy niezerowych wektorach przedziałowi podobieństwa \([-1,1]\) odpowiada przedział odległości \([0,2]\)~\cite{jm3,pgvector_docs}. W programie parametr \texttt{--threshold} określa maksymalną odległość, domyślnie \(0{,}60\). Warunek \(d_{\cos}\leq0{,}60\) jest więc równoważny podobieństwu co najmniej \(0{,}40\), a nie \(0{,}60\). Jest to przeliczenie z równania~\eqref{eq:tech-cosine-distance}, nie wynik strojenia progu. Przykładowemu warunkowi podobieństwa większego niż \(0{,}75\) odpowiada odległość mniejsza niż \(0{,}25\); wartości tych dwóch miar nie należy stosować zamiennie. Dobór progu dla danych projektu omówiono w podrozdziale~\ref{sec:ewaluacja-progów}.
+
+\subsection{PostgreSQL z rozszerzeniem pgvector}
+\label{subsec:tech-pgvector}
+
+Rozszerzenie \texttt{pgvector} dodaje do PostgreSQL typ \texttt{vector(n)} oraz operatory odległości, dzięki czemu reprezentacje obrazów można przechowywać i porównywać w zapytaniach SQL~\cite{pgvector_docs}. Domyślnie dostępne jest dokładne wyszukiwanie najbliższych sąsiadów. Indeksy przybliżone, w tym HNSW, pozwalają przyspieszyć wyszukiwanie kosztem możliwości pominięcia części najbliższych wyników~\cite{pgvector_docs}.
+
+HNSW organizuje wektory w wielowarstwowy graf, a przy wyszukiwaniu według odległości kosinusowej używana jest klasa operatorów \texttt{vector\_cosine\_ops}~\cite{pgvector_docs}. W projekcie PostgreSQL pełni rolę magazynu reprezentacji obsługiwanego przez AI Workera. Przepływ decyzji i aktualizacji bazy przedstawiono w podrozdziale~\ref{subsec:similarity-grpc-pipeline}, a sposób wyznaczania wektorów w podrozdziale~\ref{sec:reprezentacja-wektorowa}.
+
+\subsection{Komunikacja między usługami: gRPC i Protocol Buffers}
+\label{subsec:tech-grpc-protobuf}
+
+gRPC umożliwia wywoływanie metod zdalnej usługi na podstawie kontraktu opisującego parametry i odpowiedzi. Definicje wiadomości oraz metod zapisane w pliku \texttt{.proto} służą do wygenerowania kodu klienta i serwera~\cite{grpc_core_concepts}. Protocol Buffers koduje wiadomości w formacie binarnym; rekordy zawierają numer pola, typ kodowania i dane, a pole \texttt{bytes} przenosi ciąg bajtów poprzedzony długością~\cite{protobuf_encoding}.
+
+W bramie Go i AI Workerze Python zastosowano wspólny kontrakt oraz strumieniowanie po stronie klienta. W tym modelu klient wysyła sekwencję wiadomości, serwer zwraca jedną odpowiedź, a kolejność wiadomości w obrębie wywołania jest zachowana~\cite{grpc_core_concepts}. Umożliwia to przesyłanie obrazu we fragmentach zamiast umieszczania całego pliku w jednej wiadomości. Kontrakt projektu i przebieg wywołania przedstawiono w podrozdziałach~\ref{subsubsec:grpc-komunikacja} i~\ref{subsec:similarity-grpc-pipeline}.
