@@ -30,3 +30,28 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+venv
+.venv
+.ruff_cache
+.pytest_cache
+*.pyc
+~$*.docx
+.mypy_cache
+
+# datasets
+.datasets/
+
+# per-run gateway logs and metrics
+dedup-log/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyz
